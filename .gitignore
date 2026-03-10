@@ -1,0 +1,21 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest*
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Linting / Compliance
+.ruff*
+
+# Virtual environments
+.env
+.venv
+
+# PyMOL output (if any)
+*.png
+*.mp4

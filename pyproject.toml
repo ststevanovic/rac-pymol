@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=42","wheel"]
+build-backend = "setuptools.build_meta"
+
+# authors list must live inside the [project] table; declaring it earlier
+# as a separate table caused a TOML parser error when installing in editable
+# mode.  Here we simply store a single author object inline.
+[project]
+name = "rac-pymol"
+version = "0.1.0"
+description = "Rendering-as-code with PyMOL: backend abstraction template"
+authors = [{ name = "Strahinja Stevanovic", email = "noreply@example.com" }]
+
+# minimal dependencies for demonstration; pymol typically installed separately
+dependencies = ["pymol-open-source"]
+
+# require Python version
+requires-python = ">=3.9"
+
+[tool.ruff]
+line-length = 88
+select = ["E", "F", "W", "C90"]  # mimic pycodestyle/flake8 defaults
+exclude = ["build", "dist", "__pycache__", ".venv"]
+
+[tool.setuptools.packages.find]
+include = ["engine", "pymol", "release"]
+
+[project.optional-dependencies]
+# development utilities such as linters and formatters
+dev = ["ruff>=0.0.0"]
