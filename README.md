@@ -104,8 +104,34 @@ classDiagram
 
 ## Usage
 
-The simplest way to try the project is to start PyMOL (headless) and import the
-module; you can then call `pymol.scene_control.export_scene()` and use the CLI
-utilities to persist or restore the state.  See individual scripts for example
-arguments.
+
+### 1. Setup, lint and test
+
+For POSIX:
+
+```bash
+python3 -m venv .venv \
+    && . .venv/bin/activate \
+    && pip install --upgrade pip setuptools wheel \
+    && pip install -e .[dev] \
+    && ruff check . \
+    && pytest -q
+```
+
+For Windows:
+
+```powershell
+python -m venv .venv; .\.venv\Scripts\Activate.ps1; pip install --upgrade pip setuptools wheel; pip install -e .[dev]; ruff check .; pytest -q
+```
+
+### 2. Quick run
+
+```bash
+python pymol-templates/simple.py
+```
+
+Checkout the other template scripts...
+
+
+
 

@@ -4,7 +4,7 @@
 
 def test_save_list_load(tmp_path):
     """DBController.save_scene / list_scenes / load_scene round-trip."""
-    from pymol.controller import PyMOLController
+    from pymol_backend.controller import PyMOLController
 
     ctrl = PyMOLController(path=tmp_path / "scenography.db")
     ctrl.connect()

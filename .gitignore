@@ -18,4 +18,7 @@ dist/
 
 # PyMOL output (if any)
 *.png
+
+# Rendering outputs (staged/loaded scene images, debug JSON)
+.rendering/
 *.mp4

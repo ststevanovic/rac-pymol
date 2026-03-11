@@ -9,7 +9,7 @@ def test_ingest(tmp_path):
     src = Path(__file__).parent / "data" / "visual_system_state.json"
     assert src.exists(), "sample scene JSON must exist"
 
-    from pymol.controller import PyMOLController
+    from pymol_backend.controller import PyMOLController
 
     ctrl = PyMOLController(path=tmp_path / "scenography.db")
     ctrl.connect()

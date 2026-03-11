@@ -11,7 +11,7 @@ from .controller import DBController
 
 # -- active backend selection ------------------------------------------------
 # Only this import needs to change when a new backend is introduced.
-from pymol.controller import PyMOLController as _BackendController
+from pymol_backend.controller import PyMOLController as _BackendController
 # ----------------------------------------------------------------------------
 
 _controller: Optional[DBController] = None

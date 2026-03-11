@@ -25,11 +25,11 @@ from dataclasses import dataclass
 class BaseType:
     """String constants for the base_type column in scene_objects.
 
-    Organic        – small molecule / ligand (sticks, lines)
-    Inorganic      – metal cluster, crystal packing, unclassified solid
-    Macromolecular – protein or nucleic acid chain (cartoon / ribbon)
-    Special        – solvent, ions, pseudo-atoms, axes
-    Chains         – selection / chain-group pseudo-objects
+    Organic        - small molecule / ligand (sticks, lines)
+    Inorganic      - metal cluster, crystal packing, unclassified solid
+    Macromolecular - protein or nucleic acid chain (cartoon / ribbon)
+    Special        - solvent, ions, pseudo-atoms, axes
+    Chains         - selection / chain-group pseudo-objects
     """
     ORGANIC        = "organic"
     INORGANIC      = "inorganic"
@@ -62,32 +62,6 @@ class SceneObject:
     base_type: str   # one of BaseType.*
     payload: str     # backend-specific JSON fragment
 
-
-# ---------------------------------------------------------------------------
-# Legacy / model-registry dataclasses (kept for future use)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ModelEntry:
-    id: int
-    path: str
-    score: float
-    tag: str
-
-@dataclass
-class MetricsEntry:
-    model_id: int
-    sasa: float
-    max_dist: float
-
-@dataclass
-class RenderEntry:
-    id: int
-    scene: str
-    model_ids: str
-    settings_hash: str
-    output_path: str
-    timestamp: str
 
 
 

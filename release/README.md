@@ -10,7 +10,7 @@ maintainers are involved.
 	checks against scenography database `sce.db`.  
 
 TODO: A small script (see `tests/test_db_versioning.py`)
-	can be extended to verify the schema when data changes. Once we write the scheme... SKIP if not written yet.
+	can be extended to verify the schema when data changes. 
 
 * When a release branch includes updates to the database schema or new scene
 	data, the CI should validate that the schema migration is applied correctly

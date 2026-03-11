@@ -14,6 +14,17 @@ from pathlib import Path
 from engine.controller import DBController
 from engine.models import BaseType
 
+# Try to import PyMOL command API. If running inside a PyMOL-enabled
+# virtualenv this will be available and we prefer to use its selection
+# keywords for robust classification. Otherwise fall back to heuristics
+# based on the exported JSON payload.
+try:
+  from pymol import cmd
+  _HAVE_CMD = True
+except Exception:
+  cmd = None
+  _HAVE_CMD = False
+
 
 # ---------------------------------------------------------------------------
 # Base type classification — PyMOL-specific heuristics
@@ -26,6 +37,68 @@ _ION_RESIDUES = {
     "MN", "CU", "NI", "CO", "CD", "HG", "PB",
 }
 _NUCLEIC_ACID_ATOMS = {"P", "OP1", "OP2", "O5'", "C5'", "C4'", "C3'", "O3'"}
+def _classify_with_cmd(name: str):
+    if not _HAVE_CMD:
+        return None
+
+    try:
+        names = set(cmd.get_names("objects"))
+    except Exception:
+        return None
+
+    if name not in names:
+        return None
+
+    try:
+        if cmd.count_atoms(f"({name}) and solvent") > 0:
+            return BaseType.SPECIAL
+        if cmd.count_atoms(f"({name}) and polymer and nucleic") > 0:
+            return BaseType.MACROMOLECULAR
+        if cmd.count_atoms(f"({name}) and polymer and protein") > 0:
+            return BaseType.MACROMOLECULAR
+        if cmd.count_atoms(f"({name}) and polymer") > 0:
+            return BaseType.MACROMOLECULAR
+        total_atoms = cmd.count_atoms(f"({name})")
+        if 0 < total_atoms <= 4:
+            return BaseType.SPECIAL
+    except Exception:
+        return None
+
+    return None
+
+
+def _classify_with_heuristics(
+    name: str,
+    reps: dict,
+    atom_colors: dict,
+    atom_names: set,
+) -> str:
+    # heuristic 1: selection / chain pseudo-objects (no atoms, no reps)
+    if not atom_colors and not any(reps.values()):
+        return BaseType.CHAINS
+
+    # heuristic 2: nucleic acid backbone atoms
+    if atom_names & _NUCLEIC_ACID_ATOMS:
+        return BaseType.MACROMOLECULAR
+
+    # heuristic 3: water / ion objects by name
+    name_upper = name.upper()
+    if name_upper in _SOLVENT_RESIDUES or name_upper in _ION_RESIDUES:
+        return BaseType.SPECIAL
+
+    # heuristic 4: only one or two atoms total → likely a special/ion object
+    if 0 < len(atom_colors) <= 4 and not reps.get("cartoon"):
+        return BaseType.SPECIAL
+
+    # heuristic 5: cartoon → macromolecule (protein chain)
+    if reps.get("cartoon"):
+        return BaseType.MACROMOLECULAR
+
+    # heuristic 6: sticks / lines / nonbonded → organic small molecule
+    if reps.get("sticks") or reps.get("lines") or reps.get("nonbonded"):
+        return BaseType.ORGANIC
+
+    return BaseType.INORGANIC
 
 
 def _classify_object(obj_name: str, obj_data: dict) -> str:
@@ -50,32 +123,13 @@ def _classify_object(obj_name: str, obj_data: dict) -> str:
         if len(parts) >= 3:
             atom_names.add(parts[2])
 
-    # heuristic 1: selection / chain pseudo-objects (no atoms, no reps)
-    if not atom_colors and not any(reps.values()):
-        return BaseType.CHAINS
+    # Prefer selection-based classification when available
+    if _HAVE_CMD:
+        cmd_result = _classify_with_cmd(obj_name)
+        if cmd_result:
+            return cmd_result
 
-    # heuristic 2: nucleic acid backbone atoms
-    if atom_names & _NUCLEIC_ACID_ATOMS:
-        return BaseType.MACROMOLECULAR
-
-    # heuristic 3: water / ion objects by name
-    name_upper = obj_name.upper()
-    if name_upper in _SOLVENT_RESIDUES or name_upper in _ION_RESIDUES:
-        return BaseType.SPECIAL
-
-    # heuristic 4: only one or two atoms total → likely a special/ion object
-    if 0 < len(atom_colors) <= 4 and not reps.get("cartoon"):
-        return BaseType.SPECIAL
-
-    # heuristic 5: cartoon → macromolecule (protein chain)
-    if reps.get("cartoon"):
-        return BaseType.MACROMOLECULAR
-
-    # heuristic 6: sticks / lines / nonbonded → organic small molecule
-    if reps.get("sticks") or reps.get("lines") or reps.get("nonbonded"):
-        return BaseType.ORGANIC
-
-    return BaseType.INORGANIC
+    return _classify_with_heuristics(obj_name, reps, atom_colors, atom_names)
 
 
 # ---------------------------------------------------------------------------
@@ -108,11 +162,25 @@ class PyMOLController(DBController):
               ...
             }
           }
-        """
-        with open(filepath, "r") as f:
-            doc = json.load(f)
 
-        scene_name = name or Path(filepath).stem
+        Parameters
+        ----------
+        filepath : str
+            Path to the JSON export file (if provided) OR None to capture
+            from the current live PyMOL session.
+        name : str, optional
+            Scene name for the database record.
+        """
+        # If filepath provided, load from JSON (legacy/debug path)
+        if filepath:
+            with open(filepath, "r") as f:
+                doc = json.load(f)
+            scene_name = name or Path(filepath).stem
+        else:
+            # Capture directly from live PyMOL session
+            from . import scene
+            doc = scene.export_visual_system_state()
+            scene_name = name or "untitled_scene"
 
         meta = json.dumps(doc.get("global_settings", {}))
         view = json.dumps(doc.get("view_matrix", []))

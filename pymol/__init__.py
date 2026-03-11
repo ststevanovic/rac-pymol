@@ -1,1 +1,0 @@
-# PyMOL backend package
