@@ -4,27 +4,36 @@ A minimal Python project for "Rendering as Code with PyMOL".
 
 ## Architecture
 
-Three layers, strict dependency direction — nothing in `engine/` imports from `pymol/`:
+Two layers:
 
-* **`engine/`** — renderer-agnostic ABC (`DBController`), typed models (`BaseType`, `SceneRecord`, `SceneObject`), and a thin singleton API.  Zero PyMOL knowledge.
-* **`pymol/`** — first concrete backend.  `PyMOLController` subclasses `DBController`, implements `ingest_scene`, and classifies objects into `BaseType`.  `scene_control.py` and `pymol_hooks.py` are PyMOL-only and untouched by the engine.
-* **Scripts** — CLI entry points that call `engine.api` only.  Swapping the backend requires changing one import line in `engine/api.py`.
+* **`engine`** — renderer-agnostic layer with features:
+  - **ABC interfaces**: storage, selector mapping
+  - **`Models`**: BaseType constants, dataclasses
+  - **`Condenser`**: compression/decompression middleware
+  - **API**: thin singleton facade
+
+* **`pymol-backend`** — concrete backend implementing engine ABCs:
+  - **PyMOLController**: implements DBController + BaseTypeApi
+  - **Classification**: maps objects to BaseType via chemistry detection
+  - **Scene**: distribution-based scene application (capture, apply)
+  - **Scripts**: CLI entry points for save/load/browse
+
+
 
 ```mermaid
 classDiagram
     namespace engine {
         class DBController {
             <<abstract>>
-            +path: Path
-            +connect()
-            +close()
-            +init_schema()
-            +save_scene(name, meta, view, size) int
-            +store_object(scene_id, name, base_type, payload) int
-            +list_scenes() List
+            +save_scene(...) int
+            +store_object(...) int
             +load_scene(id) dict
-            +load_scene_objects(scene_id) List
-            +ingest_scene(filepath, name)* int
+            +ingest_scene(...)* int
+        }
+
+        class BaseTypeApi {
+            <<abstract>>
+            +get_selector(base_type)* str
         }
 
         class BaseType {
@@ -36,70 +45,50 @@ classDiagram
             CHAINS
         }
 
-        class SceneRecord {
-            id: int
-            name: str
-            meta: str
-            view: str
-            size: str
-            created: str
-        }
-
-        class SceneObject {
-            id: int
-            scene_id: int
-            name: str
-            base_type: str
-            payload: str
+        class Condenser {
+            <<module>>
+            +compress_payload(...) dict
+            +detect_distributions(...)
+            ...
         }
 
         class API {
-            +get_controller(db_path) DBController
-            +save_scene(name, meta, view, size) int
-            +ingest_scene(filepath, name) int
-            +list_scenes() List
+            +get_controller(...) DBController
+            +save_scene(...) int
             +load_scene(id) dict
-            +load_scene_objects(id) List
+            ...
         }
     }
 
     namespace pymol_backend {
         class PyMOLController {
-            +ingest_scene(filepath, name) int
-        }
-
-        class _classify_object {
-            <<function>>
-            heuristics: representations
-            heuristics: atom_colors keys
-            heuristics: object name
+            +ingest_scene(...) int
+            +get_selector(base_type) str
+            +_classify_with_cmd(name) str
         }
 
         class SceneControl {
-            +export_visual_system_state(outfile)
-            +apply_scene(infile)
+            +export_visual_system_state() dict
+            +apply_scene(scene_id)
+            +capture_and_store(name) int
         }
 
-        class PyMOLHooks {
-            +install_hooks()
+        class Scripts {
+            save_scene.py
+            load_scene.py
         }
     }
 
-    class Scripts {
-        save_scene.py
-        load_scene.py
-        browse_scenes.py
-    }
-
-    DBController <|-- PyMOLController : extends
-    PyMOLController ..> _classify_object : uses
+    DBController <|-- PyMOLController
+    BaseTypeApi <|-- PyMOLController
+    PyMOLController ..> Condenser : uses
     PyMOLController ..> BaseType : returns
+    SceneControl ..> PyMOLController : calls
+    SceneControl ..> API : uses
     API --> DBController : facade
-    API ..> PyMOLController : instantiates
-    PyMOLHooks --> API : calls
-    SceneControl --> API : calls
-    Scripts --> API : calls
-    SceneObject ..> BaseType : base_type field
+    Scripts --> API : uses
+    
+    note for Scripts "CLI entry points"
 ```
 
 ## Usage
