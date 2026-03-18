@@ -1,22 +1,21 @@
-"""Abstract database controller for scenography and versioning.
+"""Internal engine service — SQL persistence.
 
-This module defines the renderer-agnostic interface only.  No backend-specific
-knowledge (e.g. JSON structure, object types) belongs here.
-
-Each rendering backend (PyMOL, Blender, etc.) must subclass ``DBController``
-and implement the abstract methods.
+Owned entirely by the engine. No backend ever subclasses this directly.
+All methods are private by convention (_store_*, _load_*, _list_*) and
+are only called through BackendController's public facade.
 """
 
 import sqlite3
-from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+from .models import SceneObject, SceneRecord
 
 DB_PATH = Path(__file__).parent.parent / "db" / "scenography.db"
 
 
-class DBController(ABC):
-    """Abstract base — backend implementations must subclass this."""
+class DBController:
+    """Concrete SQL persistence service. Not abstract — no implementation required."""
 
     def __init__(self, path: Path = None):
         self.path = path or DB_PATH
@@ -38,7 +37,7 @@ class DBController(ABC):
             self.conn = None
 
     def init_schema(self):
-        """Create renderer-agnostic tables.  Backends may extend this."""
+        """Create renderer-agnostic tables."""
         cursor = self.conn.cursor()
         cursor.executescript(
             """
@@ -62,23 +61,10 @@ class DBController(ABC):
         self.conn.commit()
 
     # ------------------------------------------------------------------
-    # Generic scene persistence (renderer-agnostic)
+    # Write — private engine internals, called only by ingest_scene
     # ------------------------------------------------------------------
 
-    def save_scene(self, name: str, meta: str, view: str, size: str) -> int:
-        """Persist the decomposed scene record.  Returns new scene id.
-
-        Parameters
-        ----------
-        name : str
-            Human-readable scene label.
-        meta : str
-            Opaque serialised global settings (backend-specific encoding).
-        view : str
-            Opaque serialised camera / view state.
-        size : str
-            Opaque serialised viewport / canvas size.
-        """
+    def _store_scene(self, name: str, meta: str, view: str, size: str) -> int:
         cursor = self.conn.cursor()
         cursor.execute(
             "INSERT INTO scenes(name,meta,view,size) VALUES(?,?,?,?)",
@@ -87,40 +73,37 @@ class DBController(ABC):
         self.conn.commit()
         return cursor.lastrowid
 
-    def store_object(
+    def _store_scene_object(
         self,
         scene_id: int,
         name: str,
         base_type: str,
         payload: str,
     ) -> int:
-        """Insert a single typed object into the scene_objects table."""
         cursor = self.conn.cursor()
         cursor.execute(
-            (
-                "INSERT INTO scene_objects(scene_id,name,"
-                "base_type,payload) VALUES(?,?,?,?)"
-            ),
+            "INSERT INTO scene_objects(scene_id,name,base_type,payload) VALUES(?,?,?,?)",
             (scene_id, name, base_type, payload),
         )
         self.conn.commit()
         return cursor.lastrowid
 
-    def list_scenes(self) -> List[Dict[str, Any]]:
-        """Return all stored scenes (id, name, created)."""
+    # ------------------------------------------------------------------
+    # Read — private engine internals
+    # ------------------------------------------------------------------
+
+    def _list_scenes(self) -> List[Dict[str, Any]]:
         cursor = self.conn.cursor()
         cursor.execute("SELECT id,name,created FROM scenes ORDER BY id")
         return [dict(row) for row in cursor.fetchall()]
 
-    def load_scene(self, scene_id: int) -> Optional[Dict[str, Any]]:
-        """Return the full scene record as a dict, or None if not found."""
+    def _load_scene(self, scene_id: int) -> Optional[Dict[str, Any]]:
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM scenes WHERE id=?", (scene_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def load_scene_objects(self, scene_id: int) -> List[Dict[str, Any]]:
-        """Return all objects belonging to a scene."""
+    def _load_scene_objects(self, scene_id: int) -> List[Dict[str, Any]]:
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT * FROM scene_objects WHERE scene_id=? ORDER BY id",
@@ -129,19 +112,26 @@ class DBController(ABC):
         return [dict(row) for row in cursor.fetchall()]
 
     # ------------------------------------------------------------------
-    # Abstract — must be implemented by each backend
+    # Ingest — wires capture_scene output → SQL
     # ------------------------------------------------------------------
 
-    @abstractmethod
-    def ingest_scene(self, filepath: str, name: str = None) -> int:
-        """Parse a backend-specific scene export file and persist it.
+    def ingest_scene(self, record: SceneRecord, objects: List[SceneObject]) -> int:
+        """Persist a fully-mapped scene. Called automatically after capture_scene."""
+        scene_id = self._store_scene(record.name, record.meta, record.view, record.size)
+        for obj in objects:
+            self._store_scene_object(scene_id, obj.name, obj.base_type, obj.payload)
+        return scene_id
 
-        The implementation is responsible for:
-          - reading the file in whatever format the backend produces
-          - splitting it into meta / view / size / objects
-          - classifying each object into a ``BaseType``
-          - calling ``save_scene`` and ``store_object``
+    # ------------------------------------------------------------------
+    # Model builders — helpers for backends building capture output
+    # ------------------------------------------------------------------
 
-        Returns the new scene id.
-        """
-        raise NotImplementedError
+    @staticmethod
+    def make_scene_record(name: str, meta: str, view: str, size: str) -> SceneRecord:
+        """Construct a SceneRecord for persistence."""
+        return SceneRecord(id=0, name=name, meta=meta, view=view, size=size, created="")
+
+    @staticmethod
+    def make_scene_object(name: str, base_type: str, payload: str) -> SceneObject:
+        """Construct a SceneObject for persistence."""
+        return SceneObject(id=0, scene_id=0, name=name, base_type=base_type, payload=payload)

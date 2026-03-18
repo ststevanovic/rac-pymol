@@ -6,89 +6,74 @@ A minimal Python project for "Rendering as Code with PyMOL".
 
 Two layers:
 
-* **`engine`** — renderer-agnostic layer with features:
-  - **ABC interfaces**: storage, selector mapping
-  - **`Models`**: BaseType constants, dataclasses
-  - **`Condenser`**: compression/decompression middleware
-  - **API**: thin singleton facade
+* **`engine`** — renderer-agnostic core:
+  - **`DBController`** (ABC) — SQL persistence
+  - **`MolecularClassifier`** (ABC) — `is_*` slots + `classify_object`
+  - **`SceneBackend`** (ABC) — `capture_scene` contract + `ingest_scene` wiring
+  - **`BackendController`** — composes all three ABCs; backends subclass this only
+  - **`BaseType`** — constants (`MACROMOLECULAR`, `ORGANIC`, `INORGANIC`, `SPECIAL`, `CHAINS`)
 
-* **`pymol-backend`** — concrete backend implementing engine ABCs:
-  - **PyMOLController**: implements DBController + BaseTypeApi
-  - **Classification**: maps objects to BaseType via chemistry detection
-  - **Scene**: distribution-based scene application (capture, apply)
-  - **Scripts**: CLI entry points for save/load/browse
+* **`pymol-backend`** — PyMOL concrete implementation:
+  - **`PyMOLController`** — implements all ABC slots via `cmd` selectors; `capture_scene` reads `cmd.get_session()` once
+  - **`pymol_ops`** — `save_scene` / `apply_scene` registered via `cmd.extend`
 
 
 
 ```mermaid
 classDiagram
+    direction LR
     namespace engine {
         class DBController {
-            <<abstract>>
-            +save_scene(...) int
-            +store_object(...) int
-            +load_scene(id) dict
-            +ingest_scene(...)* int
+            +make_scene_record()
+            +ingest_scene()
+            -_list_scenes()
         }
 
-        class BaseTypeApi {
+        class MolecularClassifier {
             <<abstract>>
-            +get_selector(base_type)* str
+            +is_*() abc
+        }
+
+        class SceneBackend {
+            <<abstract>>
+            +capture_scene() abc
+        }
+
+        class BackendController {
+            <<facade>>
+            +list_scenes()
+            +load_*()
         }
 
         class BaseType {
-            <<constants>>
-            ORGANIC
-            INORGANIC
-            MACROMOLECULAR
-            SPECIAL
-            CHAINS
-        }
-
-        class Condenser {
-            <<module>>
-            +compress_payload(...) dict
-            +detect_distributions(...)
-            ...
-        }
-
-        class API {
-            +get_controller(...) DBController
-            +save_scene(...) int
-            +load_scene(id) dict
-            ...
+            <<enumeration>>
+            +MACROMOLECULAR str
+            +ORGANIC str
+            +INORGANIC str
+            +SPECIAL str
+            +CHAINS str
         }
     }
 
     namespace pymol_backend {
         class PyMOLController {
-            +ingest_scene(...) int
-            +get_selector(base_type) str
-            +_classify_with_cmd(name) str
+            +is_*()
+            +capture_scene()
         }
 
-        class SceneControl {
-            +export_visual_system_state() dict
-            +apply_scene(scene_id)
-            +capture_and_store(name) int
-        }
-
-        class Scripts {
-            save_scene.py
-            load_scene.py
+        class pymol_ops {
+            <<module>>
+            +save_scene()
+            +apply_scene()
         }
     }
 
-    DBController <|-- PyMOLController
-    BaseTypeApi <|-- PyMOLController
-    PyMOLController ..> Condenser : uses
-    PyMOLController ..> BaseType : returns
-    SceneControl ..> PyMOLController : calls
-    SceneControl ..> API : uses
-    API --> DBController : facade
-    Scripts --> API : uses
-    
-    note for Scripts "CLI entry points"
+    BackendController o--> DBController
+    BackendController --|> MolecularClassifier
+    BackendController --|> SceneBackend
+    MolecularClassifier ..> BaseType
+    PyMOLController --|> BackendController
+    pymol_ops --> PyMOLController
 ```
 
 ## Usage
