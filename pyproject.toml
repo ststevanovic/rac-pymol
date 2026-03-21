@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "rac-pymol"
 version = "0.1.0"
 description = "Rendering-as-code with PyMOL: backend abstraction template included"
-authors = [{ name = "Strahinja Stevanovic", email = "noreply@example.com" }]
+authors = [{ name = "Assistant", email = "noreply@example.com" }]
 
 dependencies = ["pymol-open-source"]
 
@@ -14,7 +14,7 @@ requires-python = ">=3.9"
 
 [tool.ruff]
 line-length = 88
-exclude = ["build", "dist", "__pycache__", ".venv", "pymol-templates"]
+exclude = ["build", "dist", "__pycache__", ".venv", "pymol-templates", ".rendering"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "C90"]  # mimic pycodestyle/flake8 defaults
@@ -27,3 +27,8 @@ pymol_backend = "pymol-backend"
 
 [project.optional-dependencies]
 dev = ["ruff>=0.15.0", "pytest>=7.0"]
+
+[tool.pytest.ini_options]
+markers = [
+    "deploy: end-to-end render pipeline smoke test (requires PyMOL + display)",
+]

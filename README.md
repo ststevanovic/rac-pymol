@@ -15,7 +15,7 @@ Two layers:
 
 * **`pymol-backend`** — PyMOL concrete implementation:
   - **`PyMOLController`** — implements all ABC slots via `cmd` selectors; `capture_scene` reads `cmd.get_session()` once
-  - **`pymol_ops`** — `save_scene` / `apply_scene` registered via `cmd.extend`
+  - **`driver`** — `save_scene` / `apply_scene` registered via `cmd.extend`
 
 
 
@@ -61,7 +61,7 @@ classDiagram
             +capture_scene()
         }
 
-        class pymol_ops {
+        class driver {
             <<module>>
             +save_scene()
             +apply_scene()
@@ -73,7 +73,7 @@ classDiagram
     BackendController --|> SceneBackend
     MolecularClassifier ..> BaseType
     PyMOLController --|> BackendController
-    pymol_ops --> PyMOLController
+    driver --> PyMOLController
 ```
 
 ## Usage

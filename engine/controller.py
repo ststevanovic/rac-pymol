@@ -82,7 +82,8 @@ class DBController:
     ) -> int:
         cursor = self.conn.cursor()
         cursor.execute(
-            "INSERT INTO scene_objects(scene_id,name,base_type,payload) VALUES(?,?,?,?)",
+            "INSERT INTO scene_objects(scene_id,name,base_type,payload)"
+            " VALUES(?,?,?,?)",
             (scene_id, name, base_type, payload),
         )
         self.conn.commit()
@@ -134,4 +135,6 @@ class DBController:
     @staticmethod
     def make_scene_object(name: str, base_type: str, payload: str) -> SceneObject:
         """Construct a SceneObject for persistence."""
-        return SceneObject(id=0, scene_id=0, name=name, base_type=base_type, payload=payload)
+        return SceneObject(
+            id=0, scene_id=0, name=name, base_type=base_type, payload=payload
+        )

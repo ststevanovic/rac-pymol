@@ -9,11 +9,9 @@ def test_ingest(tmp_path):
     src = Path(__file__).parent / "data" / "visual_system_state.json"
     assert src.exists(), "sample scene JSON must exist"
 
-    from pymol_backend.controller import PyMOLController
+    from pymol_backend.adapter import PyMOLController
 
     ctrl = PyMOLController(path=tmp_path / "scenography.db")
-    ctrl.connect()
-    ctrl.init_schema()
 
     sid = ctrl.ingest_scene(str(src), name="example")
     assert sid == 1
@@ -33,5 +31,3 @@ def test_ingest(tmp_path):
         assert obj["base_type"] in valid_types, (
             f"Unknown base_type '{obj['base_type']}' for object '{obj['name']}'"
         )
-
-    ctrl.close()

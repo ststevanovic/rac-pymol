@@ -18,7 +18,14 @@ Usage in a backend
         # --- scene capture ---
         def capture_scene(self, source, name=None):
             record = self.make_scene_record(name=name, meta=..., view=..., size=...)
-            objects = [self.make_scene_object(name=n, base_type=self.classify_object(n, d), payload=...) ...]
+            objects = [
+                self.make_scene_object(
+                    name=n,
+                    base_type=self.classify_object(n, d),
+                    payload=...,
+                )
+                ...
+            ]
             return record, objects
 """
 
@@ -75,11 +82,16 @@ class MolecularClassifier:
         """Return the BaseType string for an object (priority order).
         Concrete — do not override in backends.
         """
-        if self.is_chains(name, data):       return BaseType.CHAINS
-        if self.is_special(name, data):      return BaseType.SPECIAL
-        if self.is_macromolecular(name, data): return BaseType.MACROMOLECULAR
-        if self.is_organic(name, data):      return BaseType.ORGANIC
-        if self.is_inorganic(name, data):    return BaseType.INORGANIC
+        if self.is_chains(name, data):
+            return BaseType.CHAINS
+        if self.is_special(name, data):
+            return BaseType.SPECIAL
+        if self.is_macromolecular(name, data):
+            return BaseType.MACROMOLECULAR
+        if self.is_organic(name, data):
+            return BaseType.ORGANIC
+        if self.is_inorganic(name, data):
+            return BaseType.INORGANIC
         return BaseType.SPECIAL
 
 
@@ -96,7 +108,9 @@ class SceneBackend:
     """
 
     @abstractmethod
-    def capture_scene(self, source, name: str = None) -> Tuple[SceneRecord, List[SceneObject]]:
+    def capture_scene(
+        self, source, name: str = None
+    ) -> Tuple[SceneRecord, List[SceneObject]]:
         """Capture backend state → (SceneRecord, List[SceneObject]).
 
         source : filepath, None for live session, or any backend input
@@ -134,7 +148,9 @@ class BackendController(MolecularClassifier, SceneBackend):
         record, objects = self.capture_scene(source, name)
         return self._db.ingest_scene(record, objects)
 
-    def make_scene_record(self, name: str, meta: str, view: str, size: str) -> SceneRecord:
+    def make_scene_record(
+        self, name: str, meta: str, view: str, size: str
+    ) -> SceneRecord:
         return self._db.make_scene_record(name, meta, view, size)
 
     def make_scene_object(self, name: str, base_type: str, payload: str) -> SceneObject:
