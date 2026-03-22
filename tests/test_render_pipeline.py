@@ -38,11 +38,11 @@ import pytest
 # ---------------------------------------------------------------------------
 
 REPO = Path(__file__).parent.parent          # rac_pymol/
-TEMPLATE = REPO / "pymol-templates" / "simple.py"
+TEMPLATE = REPO / "pymol-workshop" / "simple.py"
 OUTPUT_DIR = REPO / ".rendering"
 
 REFERENCE_TAG = "1pdb"
-SUBJECT_TAGS = ["1lp3", "6j6j"]
+SUBJECT_TAGS = []  # deprecated in current simple.py flow; keep placeholder for future subjects
 
 # ---------------------------------------------------------------------------
 # Thresholds

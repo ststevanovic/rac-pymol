@@ -447,7 +447,7 @@ class Vis:
 
     @classmethod
     def _css(cls) -> str:
-        B, S, F, H, H2, G, M = cls.BG, cls.SURF, cls.FG, cls.HI, cls.HI2, cls.GRID, cls.MUTE
+        B, S, F, H, H2, M = cls.BG, cls.SURF, cls.FG, cls.HI, cls.HI2, cls.MUTE
         return f"""<style>
   *, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
   html, body {{ height: 100vh; width: 100vw; overflow: hidden;

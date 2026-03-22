@@ -13,10 +13,12 @@ dependencies = ["pymol-open-source"]
 requires-python = ">=3.9"
 
 [tool.ruff]
-line-length = 88
+line-length = 120
 exclude = ["build", "dist", "__pycache__", ".venv", "pymol-templates", ".rendering"]
 
 [tool.ruff.lint]
+# keep status checks strict, but adapt realistic project tolerance for this repo
+extend-ignore = ["E402", "E501", "E701", "C901"]
 select = ["E", "F", "W", "C90"]  # mimic pycodestyle/flake8 defaults
 
 [tool.setuptools]

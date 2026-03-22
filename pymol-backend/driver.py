@@ -301,8 +301,6 @@ class SceneSession:
 # BatchSession — apply a stored scene to RCSB-sourced candidates
 # ---------------------------------------------------------------------------
 
-import random as _random
-import shutil as _shutil
 import urllib.request as _urlreq
 
 
