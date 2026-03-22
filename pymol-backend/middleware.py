@@ -1,360 +1,761 @@
-"""pymol-backend/middleware.py — GUI-selection detection and special-block building.
+"""pymol-backend/middleware.py - Raw session JSON -> staged BT payload.
 
-This module handles the detection of *user-defined GUI selections* that are
-scoped below a full BaseType (e.g., an organic ligand captured as a named
-selection, a chain subset, a hand-picked active-site residue range).
+Capture (DataPipeline)
+----------------------
+LayerE   live cmd, one object -> raw object dict
+LayerD   atom_colors dict     -> NativePayload fields + drift special
+LayerC   raw object dict      -> all-5-BT staged payload  (uses LayerD)
+DataPipeline
+  process(raw)        -> staged   transform a raw dict (file or template)
+  capture_live()      -> (raw, staged)   read live cmd session then transform
 
-The result is the ``special`` block of a scene-object payload — a list of
-entries, one per detected user selection:
+Apply (ApplyPipeline)
+---------------------
+ApplyPipeline  staged BT payload + DB records -> pure cmd calls
+  apply_object(obj_rec, live_objs)   restore one scene object
+  replay_scene(scene, obj_recs)      replay global settings + view
 
-    payload = {
-        "macromolecular": {"atom_type_colors": {"CA": 11, ...}},
-        "special": [
-            # Each entry corresponds to one user-defined PyMOL selection
-            # that overlaps this object's base_type but was stored separately.
-            {
-                "name":             "active_site_residues",   # selection name
-                "base_type":        "macromolecular",         # parent chemistry
-                "atom_type_colors": {"CA": 25},
-                "ratio":            0.20,
-                "distribution":     {"start": 0.80, "end": 1.0}
-            },
-            ...
-        ]
-    }
 
-The ``special`` key is a **list** so that:
-  - Multiple user selections within the same chemical category are all
-    preserved (e.g., two active-site annotations on the same protein).
-  - Each entry carries enough metadata to reconstruct the selection on a
-    *different* structure via distribution-based positional mapping.
-
---------------------------------------------------------------------------
-Relationship to BaseType semantics
---------------------------------------------------------------------------
-
-SPECIAL has two distinct roles:
-
-  1. Primary base_type  — The tool has no native selector for this object
-     (CGO axes, nanomaterial, graphene sheet).  get_selector() returns "".
-     No special-block logic applies here; the whole object is opaque.
-
-  2. Payload subcategory  — The tool *does* recognise the base chemistry
-     (polymer, organic, inorganic), but the user further partitioned the
-     object into named selections inside PyMOL's GUI.  These sub-selections
-     are detected here and stored as the ``special`` list so they can be
-     replayed (approximately) on a different structure.
-
---------------------------------------------------------------------------
-TODO: wire this module into the save/apply pipeline
---------------------------------------------------------------------------
-
-The functions below are stubs.  They define the intended API and document
-the algorithm.  They are intentionally *not* called from adapter.py or
-driver.py yet — scene reproduction is kept simple until the full
-distribution-based replay is ready (see README.md § Future Work).
-
-Activation checklist:
-  □ Call detect_special_selections() inside PyMOLController.capture_scene()
-    after building objects_data, passing each object's session entry and
-    the already-resolved base_type.
-  □ Merge returned list into the object's payload under the "special" key
-    before handing off to make_scene_object().
-  □ Uncomment the apply branch in driver.apply_scene() that iterates
-    payload["special"] and calls reconstruct_special_selection().
-  □ Add condenser.compress_payload() call to compress atom_colors before
-    storage (engine/condenser.py — see .changelog-suggestion Phase 2).
+  TODO: produces and consumers
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    # Only for type hints — avoids hard PyMOL import at module level.
-    pass
+from collections import Counter, defaultdict
 
 try:
     from pymol import cmd as _cmd
+    import pymol.setting as _ps
     _HAVE_CMD = True
 except Exception:
     _cmd = None
+    _ps  = None
     _HAVE_CMD = False
 
+# BT constants - match models.py BaseType values exactly.
+_BT_MACRO     = "macromolecular"
+_BT_ORGANIC   = "organic"
+_BT_INORGANIC = "inorganic"
+_BT_CHAINS    = "chains"
+_BT_SPECIAL   = "special"
+
+_SUFFIX_TO_BT: dict[str, str] = {
+    "organics":   _BT_ORGANIC,
+    "inorganics": _BT_INORGANIC,
+}
+
 
 # ---------------------------------------------------------------------------
-# Public API (stubs — not wired into pipeline yet)
+# Layer E - live cmd -> raw object dict
 # ---------------------------------------------------------------------------
 
+class LayerE:
+    """Reads one live PyMOL object via cmd and returns a raw dict.
 
-def detect_special_selections(
-    obj_name: str,
-    base_type: str,
-    session_entry: dict,
-) -> list[dict]:
-    """Detect user-defined GUI selections that sub-scope *obj_name*.
-
-    For a given PyMOL object and its resolved base_type, scans the live
-    session for named *selections* (not objects) whose atoms are a proper
-    subset of this object.  Each qualifying selection becomes one entry in
-    the returned ``special`` list — capturing its colour pattern and
-    positional distribution so it can be replayed on a different structure.
-
-    Parameters
-    ----------
-    obj_name : str
-        Name of the parent PyMOL object (e.g., "9ax6").
-    base_type : str
-        Already-resolved BaseType constant for this object
-        ("macromolecular", "organic", "inorganic", "special", "chains").
-    session_entry : dict
-        The per-object dict from ``cmd.get_session()["names"]`` for this
-        object.  Passed in so the function stays testable without a live
-        PyMOL session (unused in the live-session path).
-
-    Returns
-    -------
-    list[dict]
-        Zero or more dicts, each with keys:
-          ``name``             — selection name (user label, metadata only)
-          ``base_type``        — parent BaseType (same as *base_type*)
-          ``atom_type_colors`` — dict mapping atom_type → dominant color_index
-          ``ratio``            — fraction of parent object atoms in this sel.
-          ``distribution``     — {``start``: float, ``end``: float} percentile
-                                 range within the parent object's atom list
-                                 sorted by residue number.
+    Raw object schema (all values are direct cmd output, nothing derived):
+      representations : {rep_name: bool}
+      atom_colors     : {"chain|resi|name|alt": int}   color index
+      chains          : [str] | None
+      color_index     : int
+      object_matrix   : [float x 16]
+      visibility      : bool | None
+      object_settings : [[name, type, value], ...] | None
     """
-    if not _HAVE_CMD or _cmd is None:
-        return []
 
-    cmd = _cmd
-
-    try:
-        parent_total = cmd.count_atoms(f"({obj_name})")
-        if parent_total == 0:
-            return []
-
-        # Collect parent atoms sorted by resi for percentile computation
-        parent_atoms: list[tuple[int, int]] = []  # (resi, ID)
-        cmd.iterate(
-            f"({obj_name})",
-            "parent_atoms.append((int(resi), ID))",
-            space={"parent_atoms": parent_atoms},
-        )
-        parent_atoms.sort(key=lambda x: x[0])
-        parent_id_to_idx = {atom_id: i for i, (_, atom_id) in enumerate(parent_atoms)}
-
-        results: list[dict] = []
-
-        for sel_name in cmd.get_names("selections"):
-            # Must be a proper non-empty subset of obj_name
-            overlap = cmd.count_atoms(f"({sel_name}) and ({obj_name})")
-            if overlap == 0 or overlap == parent_total:
-                # Zero overlap — unrelated; full overlap — not a sub-selection
-                continue
-            if cmd.count_atoms(f"({sel_name})") != overlap:
-                # Selection spans atoms outside this object too — skip
-                continue
-
-            # Collect (resi, atom_id, atom_type, color_index) for this selection
-            sel_data: list[tuple[int, int, str, int]] = []
-            cmd.iterate(
-                f"({sel_name}) and ({obj_name})",
-                "sel_data.append((int(resi), ID, name, color))",
-                space={"sel_data": sel_data},
-            )
-            if not sel_data:
-                continue
-
-            ratio = len(sel_data) / parent_total
-
-            # Compute positional distribution (percentiles within parent)
-            sel_indices = sorted(
-                parent_id_to_idx[atom_id]
-                for _, atom_id, _, _ in sel_data
-                if atom_id in parent_id_to_idx
-            )
-            if not sel_indices:
-                continue
-            distribution = {
-                "start": round(sel_indices[0] / parent_total, 2),
-                "end":   round(sel_indices[-1] / parent_total, 2),
-            }
-
-            # Dominant colour per atom_type for this selection
-            atom_type_colors = _dominant_color_per_atom_type(
-                atom_colors={},      # unused — we use sel_data directly
-                atom_ids=[],         # unused
-                _sel_data=sel_data,  # internal shortcut
-            )
-
-            results.append({
-                "name":             sel_name,
-                "base_type":        base_type,
-                "atom_type_colors": atom_type_colors,
-                "ratio":            round(ratio, 2),
-                "distribution":     distribution,
-            })
-
-        return results
-
-    except Exception:
-        return []
-
-
-def _apply_atom_type_slice(
-    cmd,
-    atom_type: str,
-    color_idx: int,
-    parent_selector: str,
-    distribution: dict,
-) -> None:
-    """Paint a proportional slice of atoms for one atom_type + colour."""
-    if parent_selector:
-        base_sel = f"name {atom_type} and {parent_selector}"
-    else:
-        base_sel = f"name {atom_type}"
-    atom_entries: list[tuple[int, int]] = []
-    try:
-        cmd.iterate(
-            base_sel,
-            "atom_entries.append((int(resi), ID))",
-            space={"atom_entries": atom_entries},
-        )
-    except Exception:
-        return
-    if not atom_entries:
-        return
-    atom_entries.sort(key=lambda x: x[0])
-    total = len(atom_entries)
-    start_idx = int(total * distribution["start"])
-    end_idx   = max(start_idx + 1, int(total * distribution["end"]))
-    selected_ids = [atom_id for _, atom_id in atom_entries[start_idx:end_idx]]
-    if not selected_ids:
-        return
-    try:
-        id_sel = "ID " + "+".join(map(str, selected_ids))
-        rgb = cmd.get_color_tuple(color_idx)
-        cmd.color(rgb, id_sel)
-    except Exception:
-        pass
-
-
-def reconstruct_special_selection(
-    entry: dict,
-    parent_selector: str,
-) -> None:
-    """Replay one ``special`` list entry onto the current PyMOL structure.
-
-    Uses the stored distribution percentiles to map the original selection's
-    positional range onto the (possibly different) current structure.
-
-    Parameters
-    ----------
-    entry : dict
-        One item from ``payload["special"]``, as produced by
-        ``detect_special_selections()``.  Must have keys:
-          ``name``             — selection name to (re)create
-          ``atom_type_colors`` — dict mapping atom_type → color_index
-          ``distribution``     — {``start``: float, ``end``: float}
-    parent_selector : str
-        The PyMOL keyword for the parent BaseType (e.g., "polymer").
-        Obtained from ``controller.get_selector(entry["base_type"])``.
-        May be "" for SPECIAL/CHAINS — in that case the chemistry filter
-        is omitted.
-    """
-    if not _HAVE_CMD or _cmd is None:
-        return
-
-    cmd = _cmd
-    distribution = entry.get("distribution", {"start": 0.0, "end": 1.0})
-    atom_type_colors: dict[str, int] = entry.get("atom_type_colors", {})
-    sel_name: str = entry.get("name", "")
-
-    for atom_type, color_idx in atom_type_colors.items():
-        _apply_atom_type_slice(cmd, atom_type, color_idx, parent_selector, distribution)
-
-    # Optionally recreate the named selection in the new session
-    if sel_name:
+    def process(self, obj: str, **ctx) -> dict:
+        representations: dict[str, bool] = {}
         try:
-            if parent_selector:
-                cmd.select(sel_name, parent_selector)
-            else:
-                cmd.select(sel_name, "all")
+            for rep in _cmd.repres:
+                representations[rep] = _cmd.count_atoms(f"({obj}) and rep {rep}") > 0
         except Exception:
             pass
 
+        atom_colors: dict[str, int] = {}
+        try:
+            _cmd.iterate(
+                f"({obj})",
+                "atom_colors[f'{chain}|{resi}|{name}|{alt}'] = color",
+                space={"atom_colors": atom_colors},
+            )
+        except Exception:
+            pass
+
+        chains: list[str] = []
+        try:
+            chains = _cmd.get_chains(obj) or []
+        except Exception:
+            pass
+
+        try:
+            color_index = _cmd.get_object_color_index(obj)
+        except Exception:
+            color_index = 0
+
+        try:
+            object_matrix = list(_cmd.get_object_matrix(obj) or [])
+        except Exception:
+            object_matrix = []
+
+        try:
+            vis = _cmd.get_vis()
+            visibility = vis[0].get(obj) if vis else None
+        except Exception:
+            visibility = None
+
+        # Per-object settings that differ from the global value.
+        # Stored as [name, type_int, raw_value] - no resolution.
+        object_settings: list = []
+        if _ps is not None:
+            try:
+                for sname in _ps.get_name_list():
+                    try:
+                        typ, (val,) = _cmd.get_setting_tuple(sname, obj)
+                        _, (gval,) = _cmd.get_setting_tuple(sname)
+                        if val != gval:
+                            object_settings.append([sname, typ, val])
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        return {
+            "representations":  representations,
+            "atom_colors":      atom_colors,
+            "chains":           chains or None,
+            "color_index":      color_index,
+            "object_matrix":    object_matrix,
+            "visibility":       visibility,
+            "object_settings":  object_settings or None,
+        }
+
 
 # ---------------------------------------------------------------------------
-# Internal helpers (referenced by TODO implementations above)
+# Layer D - atom_colors -> NativePayload fields + drift special
 # ---------------------------------------------------------------------------
 
+class LayerD:
+    """atom_colors {pipe_key: cidx} -> NativePayload-conformant dict.
 
-def _build_atom_distribution(
-    atom_entries: list[tuple[int, int]],
-    parent_total: int,
-) -> dict[str, float]:
-    """Given [(resi, atom_id), ...] sorted by resi, return percentile range.
-
-    Parameters
-    ----------
-    atom_entries : list of (resi, atom_id)
-        Atoms belonging to one selection, already sorted by residue number.
-    parent_total : int
-        Total number of atoms in the parent object (denominator for percentile).
-
-    Returns
-    -------
-    dict with ``start`` and ``end`` keys (normalised 0.0 – 1.0).
+      atom_names   : {atom_name: dominant_cidx}
+      color_counts : {str(cidx): count}
+      color_ratios : {str(cidx): fraction}
+      color_rgb    : {str(cidx): [r,g,b]}   resolved via cmd when available
+      total_atoms  : int
+      ratio        : 1.0
+      special      : [{pipe_keys, color_index, color_rgb, ratio}, ...]
     """
-    if not atom_entries or parent_total == 0:
-        return {"start": 0.0, "end": 1.0}
-    indices = [i for i, _ in enumerate(atom_entries)]
-    return {
-        "start": round(indices[0]  / parent_total, 2),
-        "end":   round(indices[-1] / parent_total, 2),
-    }
+
+    def process(self, atom_colors: dict, obj_name: str = "", bt: str = "") -> dict:
+        if not atom_colors:
+            return {
+                "atom_names": {}, "color_counts": {}, "color_ratios": {},
+                "color_rgb": {}, "total_atoms": 0, "ratio": 1.0, "special": [],
+            }
+
+        by_name: dict[str, list[tuple[str, int]]] = defaultdict(list)
+        for pipe_key, cidx in atom_colors.items():
+            parts = pipe_key.split("|")
+            aname = parts[2] if len(parts) > 2 else "?"
+            by_name[aname].append((pipe_key, cidx))
+
+        dominant: dict[str, int] = {
+            aname: Counter(cidx for _, cidx in pairs).most_common(1)[0][0]
+            for aname, pairs in by_name.items()
+        }
+
+        total = len(atom_colors)
+        all_counts: Counter = Counter(atom_colors.values())
+        color_counts = {str(k): v for k, v in all_counts.items()}
+        color_ratios = {str(k): round(v / total, 6) for k, v in all_counts.items()}
+
+        color_rgb: dict[str, list] = {}
+        if _HAVE_CMD and _cmd is not None:
+            for cidx in all_counts:
+                try:
+                    color_rgb[str(cidx)] = list(_cmd.get_color_tuple(cidx))
+                except Exception:
+                    pass
+
+        drift_by_cidx: dict[int, list[str]] = defaultdict(list)
+        for aname, pairs in by_name.items():
+            dom = dominant[aname]
+            for pipe_key, cidx in pairs:
+                if cidx != dom:
+                    drift_by_cidx[cidx].append(pipe_key)
+
+        special: list[dict] = []
+        for cidx, keys in drift_by_cidx.items():
+            entry: dict = {
+                "ratio":       round(len(keys) / total, 4),
+                "color_index": cidx,
+                "pipe_keys":   keys,
+            }
+            rgb = color_rgb.get(str(cidx))
+            if rgb is not None:
+                entry["color_rgb"] = rgb
+            special.append(entry)
+
+        return {
+            "atom_names":   dominant,
+            "color_counts": color_counts,
+            "color_ratios": color_ratios,
+            "color_rgb":    color_rgb,
+            "total_atoms":  total,
+            "ratio":        1.0,
+            "special":      special,
+        }
 
 
-def _dominant_color_per_atom_type(
+# ---------------------------------------------------------------------------
+# Layer C - one raw object[name] dict -> (bt, native, special[, chains_data])
+# ---------------------------------------------------------------------------
+
+_ALL_BTS = (_BT_MACRO, _BT_ORGANIC, _BT_INORGANIC, _BT_CHAINS, _BT_SPECIAL)
+
+_EMPTY_NATIVE = {
+    "atom_names": {}, "color_counts": {}, "color_ratios": {},
+    "color_rgb": {}, "total_atoms": 0, "ratio": 0.0,
+}
+
+
+class LayerC:
+    """Owns one objects[name] dict level.
+
+    Classifies BT from label, strips raw-only keys, delegates atom_colors
+    to LayerD. Returns (bt, native, special).
+    """
+    _D_FIELDS = frozenset({
+        "atom_names", "color_counts", "color_ratios",
+        "color_rgb", "total_atoms", "ratio",
+    })
+    _SKIP = frozenset({"atom_colors", "base_type"})
+
+    def __init__(self):
+        self._layer_d = LayerD()
+
+    def process(self, obj_dict: dict, label: str = "") -> tuple[str, dict, list]:
+        bt     = obj_dict.get("base_type") or _classify_label(label)
+        native = {k: v for k, v in obj_dict.items() if k not in self._SKIP}
+        ac     = obj_dict.get("atom_colors") or {}
+
+        d_out = self._layer_d.process(ac, obj_name=label, bt=bt)
+        for field in self._D_FIELDS:
+            native[field] = d_out[field]
+
+        # Augment color_rgb with any color indices found in object_settings
+        # (e.g. cartoon_color) that were not present in atom_colors.
+        if _HAVE_CMD and _cmd is not None:
+            rgb_map = native["color_rgb"]
+            for entry in (obj_dict.get("object_settings") or []):
+                if isinstance(entry, (list, tuple)) and len(entry) >= 3:
+                    cidx = entry[2]
+                    if isinstance(cidx, int) and str(cidx) not in rgb_map:
+                        try:
+                            rgb_map[str(cidx)] = list(_cmd.get_color_tuple(cidx))
+                        except Exception:
+                            pass
+
+        return bt, native, d_out["special"]
+
+
+# ---------------------------------------------------------------------------
+# DataPipeline - public facade
+# ---------------------------------------------------------------------------
+
+class DataPipeline:
+    """Single entry point for all session capture and transform work.
+
+      capture_live() -> (raw, staged)   read live cmd session + transform
+      process(raw)   -> staged          transform a raw dict (file or template)
+    """
+
+    def __init__(self):
+        self._layer_c = LayerC()
+
+    def process(self, raw: dict) -> dict:
+        """LayerA: copy root keys through, delegate objects to LayerB logic.
+
+        Output schema (fixed):
+          global_settings, view_matrix, viewport  -- passed through
+          objects: {
+            macromolecular: [{native}, {special}],
+            organic:        [{native}, {special}],
+            inorganic:      [{native}, {special}],
+            special:        [{native}, {special}],
+            chains:         {"A": [{native}, {special}], "B": ...},
+          }
+        """
+        # LayerA -- root passthrough
+        staged: dict = {k: raw[k] for k in ("global_settings", "view_matrix", "viewport", "camera_position") if k in raw}
+
+        # LayerB -- aggregate all objects into the fixed BT slots
+        objects_out: dict = {
+            _BT_MACRO:     {"native": dict(_EMPTY_NATIVE), "special": []},
+            _BT_ORGANIC:   {"native": dict(_EMPTY_NATIVE), "special": []},
+            _BT_INORGANIC: {"native": dict(_EMPTY_NATIVE), "special": []},
+            _BT_SPECIAL:   {"native": dict(_EMPTY_NATIVE), "special": []},
+            _BT_CHAINS:    {},
+        }
+
+        # Keep raw atom_colors per label for the cross-reference pass below.
+        raw_atom_colors: dict[str, dict] = {}
+
+        for label, obj_dict in (raw.get("objects") or {}).items():
+            bt, native, special = self._layer_c.process(obj_dict, label=label)
+            raw_atom_colors[label] = obj_dict.get("atom_colors") or {}
+            if bt == _BT_CHAINS:
+                # chain letter = suffix after first "_" (e.g. "9ax6_A" -> "A")
+                chain_key = label.split("_", 1)[1] if "_" in label else label
+                objects_out[_BT_CHAINS][chain_key] = {"native": native, "special": special}
+            else:
+                objects_out[bt] = {"native": native, "special": special}
+
+        # Processed natives keyed by label — used to pull color data into sub-blocks.
+        processed_natives: dict[str, dict] = {}
+        for label, obj_dict in (raw.get("objects") or {}).items():
+            bt_check = _classify_label(label)
+            if bt_check == _BT_SPECIAL:
+                processed_natives[label] = objects_out[_BT_SPECIAL].get("native") or {}
+
+        # ── special sub-block injection ───────────────────────────────────
+        # For every raw object that landed in _BT_SPECIAL, cross-reference
+        # its atom pipe_keys against each chain bucket (by chain+resi) and
+        # against macromolecular (any chain, by resi).  When atoms overlap,
+        # inject an entry into that bucket's `special` list:
+        #   {"name": <raw_label>, "representations": {...}, "residues": [resi, ...]}
+        #
+        # "residues" are the matched resi values (molecule IDs) for that bucket.
+
+        # Build per-chain residue sets from chain buckets' raw atom_colors.
+        # Key: chain_letter -> set of resi strings present in that chain's atoms.
+        chain_resi_sets: dict[str, set] = {}
+        for label, obj_dict in (raw.get("objects") or {}).items():
+            bt_check = _classify_label(label)
+            if bt_check == _BT_CHAINS:
+                chain_key = label.split("_", 1)[1] if "_" in label else label
+                ac = obj_dict.get("atom_colors") or {}
+                chain_resi_sets[chain_key] = {pk.split("|")[1] for pk in ac}
+
+        # Also build a global resi set for macromolecular (union of all chains).
+        macro_resi_set: set = set()
+        for resis in chain_resi_sets.values():
+            macro_resi_set |= resis
+
+        for label, obj_dict in (raw.get("objects") or {}).items():
+            bt_check = _classify_label(label)
+            if bt_check != _BT_SPECIAL:
+                continue
+
+            sp_ac    = raw_atom_colors.get(label) or {}
+            sp_reps  = obj_dict.get("representations") or {}
+            active_reps = {k: v for k, v in sp_reps.items() if v}
+            if not active_reps:
+                continue
+
+            # Color data from the processed special native for this label.
+            sp_native   = processed_natives.get(label) or {}
+            sp_color_rgb  = sp_native.get("color_rgb") or {}
+            sp_atom_names = sp_native.get("atom_names") or {}
+
+            # Build {chain: set(resi)} from this special object's pipe_keys.
+            sp_by_chain: dict[str, set] = {}
+            for pk in sp_ac:
+                parts = pk.split("|")
+                if len(parts) >= 2:
+                    sp_by_chain.setdefault(parts[0], set()).add(parts[1])
+
+            # Inject into each matching chain bucket.
+            for chain_key, bucket in objects_out[_BT_CHAINS].items():
+                # chain_key is the suffix letter; pipe_key chain field matches it.
+                matched_resis = sorted(
+                    sp_by_chain.get(chain_key, set()) & chain_resi_sets.get(chain_key, set()),
+                    key=lambda r: int(r) if r.lstrip("-").isdigit() else r,
+                )
+                if matched_resis:
+                    bucket["special"].append({
+                        "name":            label,
+                        "representations": active_reps,
+                        "residues":        matched_resis,
+                        "color_rgb":       sp_color_rgb,
+                        "atom_names":      sp_atom_names,
+                    })
+
+            # Inject into macromolecular bucket if any atoms overlap.
+            all_sp_resis = {r for rset in sp_by_chain.values() for r in rset}
+            macro_matched = sorted(
+                all_sp_resis & macro_resi_set,
+                key=lambda r: int(r) if r.lstrip("-").isdigit() else r,
+            )
+            if macro_matched:
+                objects_out[_BT_MACRO]["special"].append({
+                    "name":            label,
+                    "representations": active_reps,
+                    "residues":        macro_matched,
+                    "color_rgb":       sp_color_rgb,
+                    "atom_names":      sp_atom_names,
+                })
+
+        staged["objects"] = objects_out
+        return staged
+
+    def capture_live(self) -> tuple[dict, dict]:
+        """Read live PyMOL session and return (raw, staged)."""
+        if not _HAVE_CMD:
+            raise RuntimeError("PyMOL not available - cannot capture live session")
+        layer_e  = LayerE()
+        all_objs = _cmd.get_names("objects")
+        session  = _cmd.get_session()
+        raw = {
+            "global_settings": {n: _cmd.get_setting_text(n) for n in _ps.get_name_list()},
+            "view_matrix":     list(_cmd.get_view()),
+            "camera_position": list(_cmd.get_position()),
+            "viewport":        list(session.get("main", [])),
+            "objects":         {obj: layer_e.process(obj) for obj in all_objs},
+        }
+        return raw, self.process(raw)
+
+
+# ---------------------------------------------------------------------------
+# build_raw_object - schema-enforced template/test constructor
+# ---------------------------------------------------------------------------
+
+def build_raw_object(
+    representations: dict[str, bool],
     atom_colors: dict[str, int],
-    atom_ids: list[int],
-    _sel_data: list[tuple[int, int, str, int]] | None = None,
-) -> dict[str, int]:
-    """Compute the dominant (most frequent) color per atom type for a subset.
+    chains: list[str] | None = None,
+    object_settings: list | None = None,
+    visibility: bool | None = None,
+    color_index: int = 0,
+    object_matrix: list | None = None,
+) -> dict:
+    """Build a raw object dict without a live PyMOL session.
 
-    Parameters
-    ----------
-    atom_colors : dict
-        Full mapping of ``"chain|resi|atom_type|alt"`` → color_index for
-        the parent object.  Used when ``_sel_data`` is not provided.
-    atom_ids : list of int
-        PyMOL atom IDs belonging to this specific selection.  Used with
-        ``atom_colors`` to filter relevant entries.
-    _sel_data : list of (resi, ID, name, color), optional
-        Pre-iterated selection data from a live ``cmd.iterate`` call.
-        When provided, ``atom_colors`` / ``atom_ids`` are ignored.
-
-    Returns
-    -------
-    dict mapping atom_type → dominant_color_index.
+    atom_colors values MUST be integer color indices.
+    Use cmd.get_color_index("yellow") to resolve a name to an index first.
+    DataPipeline resolves indices to RGB internally via LayerD.
     """
-    from collections import defaultdict, Counter
-
-    counts: dict[str, Counter] = defaultdict(Counter)
-
-    if _sel_data is not None:
-        for _resi, _atom_id, atom_type, color_idx in _sel_data:
-            counts[atom_type][color_idx] += 1
-    else:
-        for key, color_idx in atom_colors.items():
-            parts = key.split("|")
-            if len(parts) >= 3:
-                atom_type = parts[2]
-                counts[atom_type][color_idx] += 1
-
+    bad = {k: v for k, v in atom_colors.items() if not isinstance(v, int)}
+    if bad:
+        raise TypeError(
+            "atom_colors values must be int color indices; got: "
+            + ", ".join(f"{k!r}={v!r}" for k, v in list(bad.items())[:3])
+        )
     return {
-        atom_type: color_counter.most_common(1)[0][0]
-        for atom_type, color_counter in counts.items()
-        if color_counter
+        "representations":  representations,
+        "atom_colors":      atom_colors,
+        "chains":           chains or None,
+        "color_index":      color_index,
+        "object_matrix":    object_matrix or [],
+        "visibility":       visibility,
+        "object_settings":  object_settings or None,
     }
+
+
+# ---------------------------------------------------------------------------
+# BT classification helper
+# ---------------------------------------------------------------------------
+
+def _classify_label(label: str) -> str:
+    """Classify an object label into a BT by suffix convention.
+
+    9ax6            -> macromolecular  (no underscore)
+    9ax6_A          -> chains          (single uppercase letter suffix)
+    9ax6_organics   -> organic
+    9ax6_inorganics -> inorganic
+    9ax6_*          -> special
+    """
+    if "_" not in label:
+        return _BT_MACRO
+    suffix = label.split("_", 1)[1]
+    if suffix in _SUFFIX_TO_BT:
+        return _SUFFIX_TO_BT[suffix]
+    if len(suffix) == 1 and suffix.isupper():
+        return _BT_CHAINS
+    return _BT_SPECIAL
+
+
+# ---------------------------------------------------------------------------
+# Apply pipeline — staged BT payload -> pure cmd calls
+# ---------------------------------------------------------------------------
+
+import json as _json
+
+_BT_SELECTOR: dict[str, str] = {
+    "macromolecular": "polymer",
+    "organic":        "organic",
+    "inorganic":      "inorganic",
+    "special":        "solvent",
+    "chains":         "",
+}
+
+
+class ApplyPipeline:
+    """Translate staged BT payloads back into live PyMOL cmd calls.
+
+    Public methods:
+      apply_object(obj_rec, live_objs)  — restore one scene object
+      replay_scene(scene, obj_recs)     — replay global settings + view
+
+    All output is pure cmd calls — no DB access, no middleware transforms.
+    """
+
+    # ── color helpers ────────────────────────────────────────────────────
+
+    def dominant_color(self, native: dict) -> str | None:
+        """Register and return a cmd color name for the most prevalent color."""
+        ratios  = native.get("color_ratios") or {}
+        rgb_map = native.get("color_rgb")    or {}
+        if not ratios:
+            return None
+        dominant_cidx = max(ratios, key=lambda k: ratios[k])
+        rgb = rgb_map.get(dominant_cidx)
+        if rgb is None:
+            return None
+        color_name = f"_rac_{dominant_cidx}"
+        _cmd.set_color(color_name, list(rgb))
+        return color_name
+
+    def apply_atom_name_colors(self, native: dict, sele: str) -> None:
+        """Color by dominant per-atom-name color index."""
+        atom_names = native.get("atom_names") or {}
+        rgb_map    = native.get("color_rgb")  or {}
+        for aname, cidx in atom_names.items():
+            rgb = rgb_map.get(str(cidx))
+            if rgb is None:
+                continue
+            cname = f"_rac_atom_{cidx}"
+            _cmd.set_color(cname, list(rgb))
+            try:
+                _cmd.color(cname, f"({sele}) and name {aname}")
+            except Exception:
+                pass
+
+    def apply_drift(self, special: list, sele: str, rgb_map: dict) -> None:
+        """Re-color drifted atoms by their exact pipe_key coordinates."""
+        for entry in (special or []):
+            pipe_keys = entry.get("pipe_keys") or []
+            if not pipe_keys:
+                continue  # skip special-subblock entries (they have "residues", not "pipe_keys")
+            rgb = entry.get("color_rgb") or rgb_map.get(str(entry.get("color_index")))
+            if rgb is None:
+                continue
+            cname = f"_rac_drift_{entry.get('color_index')}"
+            _cmd.set_color(cname, list(rgb))
+            atom_selectors = []
+            for pk in pipe_keys:
+                parts = pk.split("|")
+                if len(parts) == 4:
+                    chain, resi, aname, alt = parts
+                    atom_selectors.append(
+                        f"(({sele}) and chain {chain} and resi {resi} and name {aname})"
+                    )
+            if atom_selectors:
+                try:
+                    _cmd.color(cname, " or ".join(atom_selectors))
+                except Exception:
+                    pass
+
+    def apply_special_subblocks(
+        self, special: list, sele: str, chain_id: str | None = None
+    ) -> None:
+        """Apply special sub-block entries (residue-level representation overrides).
+
+        Each entry: {"name", "representations", "residues", "color_rgb", "atom_names"}
+        Selection scope: sele narrowed to matched residues (and chain if given).
+        Colors are applied per atom-name using the stored atom_names + color_rgb.
+        """
+        for entry in (special or []):
+            residues = entry.get("residues")
+            if not residues:          # drift entry or empty — skip
+                continue
+            resi_str = "+".join(str(r) for r in residues)
+            if chain_id:
+                sub_sele = f"({sele}) and chain {chain_id} and resi {resi_str}"
+            else:
+                sub_sele = f"({sele}) and resi {resi_str}"
+            try:
+                if _cmd.count_atoms(sub_sele) == 0:
+                    continue
+            except Exception:
+                continue
+            self.apply_reps(entry.get("representations"), sub_sele)
+            # Apply per-atom-name colors from the original special object.
+            atom_names = entry.get("atom_names") or {}
+            rgb_map    = entry.get("color_rgb")   or {}
+            for aname, cidx in atom_names.items():
+                rgb = rgb_map.get(str(cidx))
+                if rgb is None:
+                    continue
+                cname = f"_rac_sp_{cidx}"
+                _cmd.set_color(cname, list(rgb))
+                try:
+                    _cmd.color(cname, f"({sub_sele}) and name {aname}")
+                except Exception:
+                    pass
+
+    def apply_reps(self, reps: dict | None, sele: str) -> None:
+        """Replay exactly the stored rep state — no fallback defaults."""
+        for rep, active in (reps or {}).items():
+            try:
+                if active:
+                    _cmd.show(rep, sele)
+                else:
+                    _cmd.hide(rep, sele)
+            except Exception:
+                pass
+
+    def color_and_drift(self, native: dict, special: list, sele: str) -> None:
+        """Dominant base coat -> atom-name refinement -> drift."""
+        dominant = self.dominant_color(native)
+        if dominant:
+            _cmd.color(dominant, sele)
+        self.apply_atom_name_colors(native, sele)
+        self.apply_drift(special, sele, native.get("color_rgb") or {})
+
+    # ── per-BT appliers ──────────────────────────────────────────────────
+
+    def apply_standard(self, native: dict, special: list, sele: str) -> None:
+        """Shared apply for macromolecular, organic, and inorganic BTs."""
+        self.apply_reps(native.get("representations"), sele)
+        self.color_and_drift(native, special, sele)
+        self.apply_special_subblocks(special, sele)
+
+    def apply_special_bt(self, native: dict, special: list, sele: str) -> None:
+        self.apply_reps(native.get("representations"), sele)
+        dominant = self.dominant_color(native)
+        if dominant:
+            _cmd.color(dominant, sele)
+        self.apply_drift(special, sele, native.get("color_rgb") or {})
+
+    def apply_chains_obj(self, payload: dict, target: str) -> None:
+        """Apply per-chain colors from chains BT sub-entries.
+
+        chains BT is a dict keyed by chain letter, each {native, special}.
+        Color comes from object_settings cartoon_color, not atom color index.
+        """
+        chains_bt = (payload.get("objects") or {}).get(_BT_CHAINS) or {}
+        if not chains_bt:
+            return
+        for chain_id, bucket in chains_bt.items():
+            native  = bucket.get("native") or {}
+            special = bucket.get("special") or []
+            sele = f"({target}) and polymer and chain {chain_id}"
+            try:
+                if _cmd.count_atoms(sele) == 0:
+                    continue
+            except Exception:
+                continue
+            _cmd.hide("everything", sele)
+            self.apply_reps(native.get("representations"), sele)
+            # Replay object_settings (cartoon_color etc.) on chain sub-selection.
+            # Do NOT call cmd.color() — visual color is driven by cartoon_color,
+            # not by the atom color index captured during iterate().
+            # cartoon_color is a session-specific dynamic index — resolve via
+            # color_rgb and register a named color before setting.
+            rgb_map = native.get("color_rgb") or {}
+            for entry in (native.get("object_settings") or []):
+                if isinstance(entry, (list, tuple)) and len(entry) >= 3:
+                    sname, _stype, sval = entry[0], entry[1], entry[2]
+                    if sname == "cartoon_color":
+                        rgb = rgb_map.get(str(sval))
+                        if rgb is not None:
+                            cname = f"_rac_cc_{sval}"
+                            _cmd.set_color(cname, list(rgb))
+                            try:
+                                _cmd.set("cartoon_color", cname, sele)
+                            except Exception:
+                                pass
+                        continue
+                    try:
+                        _cmd.set(sname, sval, sele)
+                    except Exception:
+                        pass
+            self.apply_drift(special, sele, native.get("color_rgb") or {})
+            self.apply_special_subblocks(special, sele, chain_id=chain_id)
+
+    _BT_APPLY_FN: dict[str, str] = {
+        "macromolecular": "apply_standard",
+        "organic":        "apply_standard",
+        "inorganic":      "apply_standard",
+        "special":        "apply_special_bt",
+    }
+
+    # ── object-level orchestration ───────────────────────────────────────
+
+    def apply_object(self, obj_rec: dict, live_objs: list) -> None:
+        """Restore representations and colours for one scene object."""
+        obj_name  = obj_rec["name"]
+        base_type = obj_rec["base_type"]
+        payload   = _json.loads(obj_rec["payload"]) if isinstance(obj_rec["payload"], str) else obj_rec["payload"]
+
+        cross_molecule = obj_name not in live_objs
+        target = obj_name if not cross_molecule else (live_objs[0] if live_objs else None)
+        if not target:
+            return
+
+        objects_node = payload.get("objects") or {}
+
+        if base_type == "chains":
+            self.apply_chains_obj(payload, target)
+            return
+
+        chem_kw = _BT_SELECTOR.get(base_type, "")
+        method  = self._BT_APPLY_FN.get(base_type)
+        if method is None:
+            return
+
+        sele = f"({target}) and {chem_kw}" if chem_kw else f"({target})"
+        try:
+            if _cmd.count_atoms(sele) == 0:
+                return
+        except Exception:
+            return
+
+        bt_bucket = objects_node.get(base_type) or {}
+        native    = bt_bucket.get("native") or {}
+        special   = bt_bucket.get("special") or []
+
+        _cmd.hide("everything", sele)
+
+        for entry in (payload.get("object_settings") or []):
+            if isinstance(entry, (list, tuple)) and len(entry) >= 3:
+                try:
+                    _cmd.set(entry[0], entry[2], target)
+                except Exception:
+                    pass
+
+        getattr(self, method)(native, special, sele)
+
+    # ── scene-level orchestration ─────────────────────────────────────────
+
+    def replay_scene(
+        self,
+        scene: dict,
+        obj_recs: list[dict],
+        restore_view: bool = True,
+    ) -> None:
+        """Replay global settings, custom colors, viewport, and optionally view."""
+        self._register_custom_colors(obj_recs)
+        meta = _json.loads(scene["meta"])
+        for setting_name, value in (meta.get("global_settings") or {}).items():
+            try:
+                _cmd.set(setting_name, value)
+            except Exception:
+                pass
+        viewport = _json.loads(scene["size"])
+        if viewport and any(v > 0 for v in viewport):
+            _cmd.viewport(*viewport)
+        if restore_view:
+            view = _json.loads(scene["view"])
+            if view:
+                _cmd.set_view(view[:18])
+
+    def _register_custom_colors(self, obj_recs: list[dict]) -> None:
+        """Register custom colors from all DB payloads before settings replay."""
+        for rec in obj_recs:
+            payload = _json.loads(rec["payload"]) if isinstance(rec["payload"], str) else rec["payload"]
+            for name, rgb in (payload.get("custom_colors") or {}).items():
+                try:
+                    _cmd.set_color(name, list(rgb))
+                except Exception:
+                    pass

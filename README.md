@@ -101,10 +101,10 @@ python -m venv .venv; .\.venv\Scripts\Activate.ps1; pip install --upgrade pip se
 ### 2. Quick run
 
 ```bash
-python pymol-templates/simple.py
+python pymol-workshop/simple.py
 ```
 
-Checkout the other template scripts...
+Checkout the other workshop scripts in `pymol-workshop/`.
 
 
 

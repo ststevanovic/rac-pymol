@@ -7,7 +7,6 @@ are only called through BackendController's public facade.
 
 import sqlite3
 from pathlib import Path
-from typing import Any, Dict, List, Optional
 
 from .models import SceneObject, SceneRecord
 
@@ -93,18 +92,18 @@ class DBController:
     # Read — private engine internals
     # ------------------------------------------------------------------
 
-    def _list_scenes(self) -> List[Dict[str, Any]]:
+    def _list_scenes(self) -> list[dict]:
         cursor = self.conn.cursor()
         cursor.execute("SELECT id,name,created FROM scenes ORDER BY id")
         return [dict(row) for row in cursor.fetchall()]
 
-    def _load_scene(self, scene_id: int) -> Optional[Dict[str, Any]]:
+    def _load_scene(self, scene_id: int) -> dict | None:
         cursor = self.conn.cursor()
         cursor.execute("SELECT * FROM scenes WHERE id=?", (scene_id,))
         row = cursor.fetchone()
         return dict(row) if row else None
 
-    def _load_scene_objects(self, scene_id: int) -> List[Dict[str, Any]]:
+    def _load_scene_objects(self, scene_id: int) -> list[dict]:
         cursor = self.conn.cursor()
         cursor.execute(
             "SELECT * FROM scene_objects WHERE scene_id=? ORDER BY id",
@@ -113,10 +112,36 @@ class DBController:
         return [dict(row) for row in cursor.fetchall()]
 
     # ------------------------------------------------------------------
+    # Scene management — not yet implemented
+    # ------------------------------------------------------------------
+
+    def scene_exists(self, name: str) -> bool:
+        """Return True if a scene with *name* is already stored."""
+        raise NotImplementedError
+
+    def get_scene_by_name(self, name: str) -> dict | None:
+        """Return the scene row for *name*, or None."""
+        raise NotImplementedError
+
+    def upsert_scene(
+        self, record: SceneRecord, objects: list[SceneObject]
+    ) -> int:
+        """Re-ingest if name exists (delete + re-insert), else insert."""
+        raise NotImplementedError
+
+    def delete_scene(self, scene_id: int) -> None:
+        """Remove scene row and all its scene_objects."""
+        raise NotImplementedError
+
+    def rename_scene(self, scene_id: int, new_name: str) -> None:
+        """Rename a stored scene."""
+        raise NotImplementedError
+
+    # ------------------------------------------------------------------
     # Ingest — wires capture_scene output → SQL
     # ------------------------------------------------------------------
 
-    def ingest_scene(self, record: SceneRecord, objects: List[SceneObject]) -> int:
+    def ingest_scene(self, record: SceneRecord, objects: list[SceneObject]) -> int:
         """Persist a fully-mapped scene. Called automatically after capture_scene."""
         scene_id = self._store_scene(record.name, record.meta, record.view, record.size)
         for obj in objects:

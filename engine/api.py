@@ -34,23 +34,27 @@ from typing import List, Tuple
 
 from .controller import DBController
 from .models import *  # noqa: F401, F403  — uniform re-export, never change this line
-from .models import BaseType, SceneObject, SceneRecord
+from .models import BaseType, NativePayload, SceneObject, SceneRecord
 
-__all__ = ["BackendController", "BaseType", "SceneRecord", "SceneObject"]
+# Convenience set — backends use this to identify BT keys without importing models.
+BASE_TYPES: frozenset[str] = frozenset(vars(BaseType)[k] for k in vars(BaseType)
+    if not k.startswith("_") and k not in ("APPLY_ORDER",)
+    and isinstance(vars(BaseType)[k], str))
+
+__all__ = ["BackendController", "BASE_TYPES", "BaseType", "NativePayload", "SceneRecord", "SceneObject"]
 
 
 # ---------------------------------------------------------------------------
-# Scope 1: Molecular classification
-# Abstract slots per BaseType — backend provides tool-native implementation.
-# Engine wires them to BaseType constants; backend never references BaseType.
+# Scope 1: Molecular classification contract
+# Abstract slots per BaseType — each backend provides tool-native impl.
+# classify_object chains through them in priority order; concrete, final.
 # ---------------------------------------------------------------------------
 
 class MolecularClassifier:
     """Abstract molecular classification interface.
 
-    One abstract method per BaseType slot. Implement each using
-    the backend tool's native chemistry detection (selectors, heuristics).
-    Priority order is enforced by classify_object().
+    Implement each is_* using the backend tool's native chemistry detection.
+    classify_object enforces priority order — do not override it in backends.
     """
 
     @abstractmethod
@@ -79,33 +83,21 @@ class MolecularClassifier:
         raise NotImplementedError
 
     def classify_object(self, name: str, data: dict) -> str:
-        """Return the BaseType string for an object (priority order).
-        Concrete — do not override in backends.
-        """
-        if self.is_chains(name, data):
-            return BaseType.CHAINS
-        if self.is_special(name, data):
-            return BaseType.SPECIAL
-        if self.is_macromolecular(name, data):
-            return BaseType.MACROMOLECULAR
-        if self.is_organic(name, data):
-            return BaseType.ORGANIC
-        if self.is_inorganic(name, data):
-            return BaseType.INORGANIC
+        """Return the BaseType string for an object — priority order, final."""
+        if self.is_chains(name, data):         return BaseType.CHAINS
+        if self.is_special(name, data):        return BaseType.SPECIAL
+        if self.is_macromolecular(name, data): return BaseType.MACROMOLECULAR
+        if self.is_organic(name, data):        return BaseType.ORGANIC
+        if self.is_inorganic(name, data):      return BaseType.INORGANIC
         return BaseType.SPECIAL
 
 
 # ---------------------------------------------------------------------------
-# Scope 2: Scene persistence interface
-# Helpers to build typed models + abstract capture_scene contract.
-# Engine wires capture_scene → ingest_scene → SQL automatically.
+# Scope 2: Scene persistence contract
 # ---------------------------------------------------------------------------
 
 class SceneBackend:
-    """Pure abstract contract: backend must implement capture_scene.
-
-    make_scene_record / make_scene_object / ingest_scene live on DBController.
-    """
+    """Pure abstract contract: backend must implement capture_scene."""
 
     @abstractmethod
     def capture_scene(
@@ -115,29 +107,24 @@ class SceneBackend:
 
         source : filepath, None for live session, or any backend input
         name   : scene label to store
-
-        Use self.make_scene_record(), self.make_scene_object(), self.classify_object().
         """
         raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------
-# Combined: BackendController
-# Single class backends subclass. Inherits SQL storage, molecular
-# classification interface, and scene persistence interface.
+# BackendController — the only class backends subclass
 # ---------------------------------------------------------------------------
 
 class BackendController(MolecularClassifier, SceneBackend):
-    """The only class backends need to subclass.
+    """Aggregates DBController + SceneBackend.
 
-    Aggregates DBController.
-    Inherits abstract contracts from MolecularClassifier and SceneBackend.
-
-    Public surface exposed to callers:
+    Public surface:
       ingest_scene()       — capture + persist
       list_scenes()        — enumerate stored scenes
       load_scene()         — fetch one scene record by id
       load_scene_objects() — fetch objects for a scene id
+      make_scene_record()  — build a SceneRecord typed model
+      make_scene_object()  — build a SceneObject typed model
     """
 
     def __init__(self, path=None):
@@ -164,5 +151,4 @@ class BackendController(MolecularClassifier, SceneBackend):
 
     def load_scene_objects(self, scene_id: int):
         return self._db._load_scene_objects(scene_id)
-
 
