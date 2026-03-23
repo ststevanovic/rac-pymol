@@ -264,9 +264,10 @@ async function pollForRunId(token, scene, dispatchedAt) {
         headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
       });
       const data = await r.json();
-      // Only match ui Render runs created AFTER we dispatched — avoids stale runs
+      // Only match 'ui' workflow runs created AFTER we dispatched — avoids stale runs
+      // Note: w.name is the workflow-level name: field ("ui"), not the job name
       const run = (data.workflow_runs || []).find(
-        w => w.name === "ui Render" && new Date(w.created_at) >= new Date(dispatchedAt)
+        w => w.name === "ui" && new Date(w.created_at) >= new Date(dispatchedAt)
       );
       if (!run) return;
       if (!_runId) {
@@ -294,12 +295,16 @@ async function pollForRunId(token, scene, dispatchedAt) {
 }
 
 // ── resolve slides URL from gh-pages/index.json ───────────────
-async function fetchArtifacts(_token) {
-  const indexUrl = `https://raw.githubusercontent.com/${REPO}/gh-pages/index.json?_=${Date.now()}`;
+async function fetchArtifacts(token) {
+  const indexUrl = `https://api.github.com/repos/${REPO}/contents/index.json?ref=gh-pages&_=${Date.now()}`;
   try {
-    const r = await fetch(indexUrl, { cache: "no-store" });
+    const r = await fetch(indexUrl, {
+      cache: "no-store",
+      headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
+    });
     if (!r.ok) { log("index.json not found on gh-pages yet.", "err"); return; }
-    const data = await r.json();
+    const envelope = await r.json();
+    const data = JSON.parse(atob(envelope.content.replace(/\n/g, "")));
     const tag  = data.latest;
     if (!tag) { log("index.json has no 'latest' field.", "err"); return; }
     const slidesUrl = `https://${REPO.split("/")[0]}.github.io/${REPO.split("/")[1]}/${tag}/slides.html`;
