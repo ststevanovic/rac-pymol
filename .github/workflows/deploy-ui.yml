@@ -34,5 +34,5 @@ jobs:
 
           cd /tmp/ghpages
           git add index.html doc/
-          git commit -m "deploy-ui: update doc from main@${GITHUB_SHA::7}" || true
+          git commit --allow-empty -m "deploy-ui: update doc from main@${GITHUB_SHA::7}"
           git push origin HEAD:gh-pages
