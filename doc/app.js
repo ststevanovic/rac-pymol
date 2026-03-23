@@ -237,7 +237,8 @@ async function executeGHAction() {
       log("Workflow dispatched successfully.", "ok");
       setStatus("running");
       cbeWrite("Workflow queued. Polling for run ID…");
-      pollForRunId(token, scene);
+      const dispatchedAt = new Date().toISOString();
+      pollForRunId(token, scene, dispatchedAt);
     } else {
       const body = await resp.text();
       log(`Dispatch failed: HTTP ${resp.status}`, "err");
@@ -252,8 +253,8 @@ async function executeGHAction() {
 }
 
 // ── poll for run ID + completion ──────────────────────────────
-async function pollForRunId(token, scene) {
-  const runsUrl = `https://api.github.com/repos/${REPO}/actions/runs?per_page=5`;
+async function pollForRunId(token, scene, dispatchedAt) {
+  const runsUrl = `https://api.github.com/repos/${REPO}/actions/runs?per_page=10`;
   let attempts = 0;
 
   _pollTimer = setInterval(async () => {
@@ -263,16 +264,18 @@ async function pollForRunId(token, scene) {
         headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
       });
       const data = await r.json();
+      // Only match ui Render runs created AFTER we dispatched — avoids stale runs
       const run = (data.workflow_runs || []).find(
-        w => w.name === "ui Render" && w.status !== "completed" || w.status === "completed"
+        w => w.name === "ui Render" && new Date(w.created_at) >= new Date(dispatchedAt)
       );
-      if (run && !_runId) {
+      if (!run) return;
+      if (!_runId) {
         _runId = run.id;
         log(`Run #${_runId} started — status: ${run.status}`, "info");
         cbeWrite(`Run ID: ${_runId}  status: ${run.status}`);
         cbeWrite(`Logs  : https://github.com/${REPO}/actions/runs/${_runId}`);
       }
-      if (run && run.status === "completed") {
+      if (run.status === "completed") {
         clearInterval(_pollTimer);
         const conclusion = run.conclusion;
         log(`Run #${_runId} ${conclusion}.`, conclusion === "success" ? "ok" : "err");
