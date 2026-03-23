@@ -216,15 +216,19 @@ async function executeGHAction() {
   log("Dispatching workflow…", "info");
   cbeWrite(`$ github-actions dispatch  scene=${scene}  sceno=${sceno || "default"}`, "prompt");
 
-  const token = sessionStorage.getItem("gh_pat") ||
-    prompt("GitHub PAT (workflow:write scope) — stored in sessionStorage only:");
-  if (token) sessionStorage.setItem("gh_pat", token);
-  if (!token) {
-    log("Cancelled — no PAT provided.", "err");
-    document.getElementById("cta").disabled = false;
+  const stored = sessionStorage.getItem("gh_pat");
+  if (!stored) {
+    // show password overlay; it will call _resumeGHAction(token) on submit
+    _pendingGHAction = { sceno, scene };
+    showPatOverlay();
     return;
   }
+  const token = stored;
 
+  _dispatchWithToken(token, sceno, scene);
+}
+
+async function _dispatchWithToken(token, sceno, scene) {
   try {
     const resp = await fetch(GH_API, {
       method: "POST",
