@@ -7,6 +7,19 @@ const REPO        = "ststevanovic/rac-pymol";
 const WORKFLOW_ID = "ui.yml";
 const GH_API      = `https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW_ID}/dispatches`;
 
+// ── bootstrap PAT from URL hash (e.g. #pat=ghp_xxx) ─────────
+// Read once, store in sessionStorage, then clear the hash so
+// the token never appears in browser history or referrer headers.
+(function bootstrapPat() {
+  const hash = location.hash.slice(1);
+  const params = new URLSearchParams(hash);
+  const pat = params.get("pat");
+  if (pat) {
+    sessionStorage.setItem("gh_pat", pat);
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+})();
+
 // Hide --local toggle when not running on localhost
 if (location.hostname !== "127.0.0.1" && location.hostname !== "localhost") {
   document.getElementById("local-toggle-label").style.display = "none";
@@ -198,6 +211,7 @@ async function executeGHAction() {
   cbeWrite(`$ github-actions dispatch  scene=${scene}  sceno=${sceno || "default"}`, "prompt");
 
   const token = sessionStorage.getItem("gh_pat") ||
+    "__PAT_UI__" ||
     prompt("GitHub PAT (workflow:write scope) — stored in sessionStorage only:");
   if (token) sessionStorage.setItem("gh_pat", token);
   if (!token) {
