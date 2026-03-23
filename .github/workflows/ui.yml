@@ -1,4 +1,4 @@
-name: ghpage
+name: ui
 
 on:
   workflow_dispatch:
@@ -13,13 +13,13 @@ on:
         default: "9ax6"
 
 # Trigger: manual dispatch from the landing page CTA-button ("Render")
-# This is the workflow wired to the ghpage UI's CTA.
+# This is the workflow wired to the ui.yml CTA.
 # For the full render pipeline see ../workflows/render.yml
 
 # Only one render at a time — queued dispatches wait; a second concurrent
 # trigger cancels the in-progress run rather than stacking unbounded jobs.
 concurrency:
-  group: ghpage-render
+  group: ui-render
   cancel-in-progress: true
 
 defaults:
@@ -28,7 +28,7 @@ defaults:
 
 jobs:
   render:
-    name: ghpage Render
+    name: ui Render
     runs-on: ubuntu-latest
 
     steps:

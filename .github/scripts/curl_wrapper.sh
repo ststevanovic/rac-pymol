@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# curl_wrapper.sh — Resolve scenography DB for ghpage Render workflow.
+# curl_wrapper.sh — Resolve scenography DB for Renderer workflow.
 #
 # Usage:
 #   bash curl_wrapper.sh [<scenography_input>]

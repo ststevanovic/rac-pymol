@@ -6,10 +6,10 @@
 #      so batch.py honours it and the run dir is predictable.
 #   2. Run batch.py with all required env vars.
 #   3. After batch completes, copy the run dir into the gh-pages orphan branch
-#      checkout at .ghpages/<run_tag>/ and update .ghpages/index.json (version
+#      checkout at .ghpagess/<run_tag>/ and update .ghpages/index.json (version
 #      manifest) so the landing page can list all past runs.
 #
-# Called from ghpage.yml instead of invoking batch.py directly.
+# Called from ui.yml instead of invoking batch.py directly.
 #
 # Usage (in workflow YAML):
 #   bash .github/scripts/remote.sh "${{ github.event.inputs.scene_id }}"
