@@ -18,11 +18,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Inject PAT_UI into index.html
-        run: |
-          sed -i "s|__PAT_UI__|${{ secrets.PAT_UI }}|g" .github/index.html
-
-      - name: Push index.html to gh-pages root
+      - name: Push index.html + doc/ to gh-pages root
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -31,12 +27,12 @@ jobs:
           git worktree add /tmp/ghpages origin/gh-pages
 
           cp .github/index.html /tmp/ghpages/index.html
+          cp -r .github/doc /tmp/ghpages/doc
+
+          # inject PAT into the deployed copy only — never touches source on main
+          sed -i "s|__PAT_UI__|${{ secrets.PAT_UI }}|g" /tmp/ghpages/doc/app.js
 
           cd /tmp/ghpages
-          git add index.html
-          if git diff --cached --quiet; then
-            echo "index.html unchanged on gh-pages, skipping."
-            exit 0
-          fi
-          git commit -m "deploy-ui: update index.html from main@${GITHUB_SHA::7}"
+          git add index.html doc/
+          git commit -m "deploy-ui: update doc from main@${GITHUB_SHA::7}" || true
           git push origin HEAD:gh-pages

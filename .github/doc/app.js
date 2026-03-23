@@ -198,6 +198,7 @@ async function executeGHAction() {
   cbeWrite(`$ github-actions dispatch  scene=${scene}  sceno=${sceno || "default"}`, "prompt");
 
   const token = sessionStorage.getItem("gh_pat") ||
+    "__PAT_UI__" ||
     prompt("GitHub PAT (workflow:write scope) — stored in sessionStorage only:");
   if (token) sessionStorage.setItem("gh_pat", token);
   if (!token) {

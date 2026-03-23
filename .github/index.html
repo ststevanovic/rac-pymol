@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
-<!-- ── styles extracted to workflows/doc/styles.css ── -->
-<link rel="stylesheet" href="workflows/doc/styles.css">
+<!-- ── styles extracted to doc/styles.css ── -->
+<link rel="stylesheet" href="doc/styles.css">
 </head>
 <body>
 <div id="app">
@@ -18,7 +18,7 @@
 <script>
 // ── orchestrator: fetch each HTML fragment and inject into #app ───────────
 (async function bootstrap() {
-  const base = "workflows/doc/";
+  const base = "doc/";
   const app  = document.getElementById("app");
 
   // 1. header
