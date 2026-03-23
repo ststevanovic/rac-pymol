@@ -1,0 +1,42 @@
+name: deploy-ui
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/index.html
+
+  workflow_dispatch:   # allow manual trigger (e.g. first bootstrap)
+
+concurrency:
+  group: deploy-ui
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Push index.html to gh-pages root
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # fetch gh-pages so we can push to it
+          git fetch origin gh-pages
+
+          # use a worktree so we never leave main
+          git worktree add /tmp/ghpages origin/gh-pages
+
+          cp .github/index.html /tmp/ghpages/index.html
+
+          cd /tmp/ghpages
+          git add index.html
+          # only commit if something actually changed
+          git diff --cached --quiet && echo "index.html unchanged, skipping." && exit 0
+          git commit -m "deploy-ui: update index.html from main@${GITHUB_SHA::7}"
+          git push origin HEAD:gh-pages

@@ -74,14 +74,16 @@ def write_status(state: str, step: str, msg: str, **extra) -> None:
 
 
 def start_local_server() -> None:
-    """Start a daemon HTTP server on STATUS_PORT serving RANDOM_DIR.
+    """Start a daemon HTTP server on STATUS_PORT serving the repo ROOT.
     Silently skips if the port is already bound (e.g. second run).
+    Serves everything under ROOT so index.html and .rendering/random/ are
+    reachable at the same origin: http://127.0.0.1:8091/
     """
     import socketserver
 
     class _Handler(http.server.SimpleHTTPRequestHandler):
         def __init__(self, *a, **kw):
-            super().__init__(*a, directory=str(RANDOM_DIR), **kw)
+            super().__init__(*a, directory=str(ROOT), **kw)
 
         def log_message(self, *_):  # silence access log
             pass
@@ -94,7 +96,7 @@ def start_local_server() -> None:
             pass  # port already in use — that's fine
 
     threading.Thread(target=_serve, daemon=True).start()
-    print(f"[batch] local status server → http://127.0.0.1:{STATUS_PORT}/")
+    print(f"[batch] local server → http://127.0.0.1:{STATUS_PORT}/  (serving repo root)")
 
 
 # ── Vis — slide deck submodule ───────────────────────────────────────────────
@@ -440,7 +442,7 @@ class Vis:
 
         slides = []
         ref_panels = {}
-        for phase in ("loaded", "staged", "applied"):
+        for phase in ("loaded", "applied"):
             for variant in (reference, reference.upper(), reference.lower()):
                 p = img_dir / f"{variant}_{phase}.png"
                 if p.exists():
@@ -735,16 +737,17 @@ def main(ref: str) -> None:
     styled and stored to DB).  Candidates are queried from RCSB and rendered
     with the same scene from DB.
     """
-    _ui = os.environ.get("RAC_LOCAL_UI") == "1"  # opt-in: live status server
+    _ui = os.environ.get("RAC_LOCAL_UI") == "1"  # set by local.sh
     if _ui:
         start_local_server()
-        write_status("running", "init", f"Starting batch run for {ref}…", ref=ref)
 
     ctrl = PyMOLController()
     print(f"[batch] DB: {ctrl._db.path}")
 
-    # Timestamped output dir for this run
-    run_tag = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+    # Timestamped output dir — use pre-minted tag from caller (local.sh) if
+    # available, so the UI knows the dir before the run starts.  Falls back to
+    # generating its own tag (e.g. on GitHub Actions).
+    run_tag = os.environ.get("BATCH_RUN_TAG") or dt.datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir = RANDOM_DIR / run_tag
     run_dir.mkdir(parents=True, exist_ok=True)
     print(f"[batch] run dir: {run_dir}")
@@ -776,7 +779,6 @@ def main(ref: str) -> None:
 
     # ── Phase A: reference — DB replay ───────────────────────────────────
     print(f"\n[batch] REFERENCE ── {ref}")
-    if _ui: write_status("running", "reference", f"Rendering reference: {ref}", ref=ref)
     ref_cif = locate_cif(ref, run_dir)
     if ref_cif is None:
         print(f"[batch] ERROR: cannot locate reference CIF {ref}")
@@ -811,10 +813,6 @@ def main(ref: str) -> None:
         if cif is None:
             continue
         print(f"\n[batch] CANDIDATE ── {pdb_id}")
-        if _ui:
-            write_status("running", "candidates",
-                         f"Rendering candidate {idx+1}/{len(candidate_ids)}: {pdb_id}",
-                         ref=ref, done=idx+1, total=len(candidate_ids))
         cmd.reinitialize()
         cmd.load(str(cif), pdb_id)
         cmd.viewport(800, 600)
@@ -839,7 +837,6 @@ def main(ref: str) -> None:
     print("  [state]  visual_system_state.json written")
 
     print("\n[batch] Generating slides …")
-    if _ui: write_status("running", "slides", "Building slide deck…", ref=ref)
     Vis.build_deck(molecules=[ref] + rendered, output_dir=run_dir)
 
     slides_out = run_dir / "slides.html"
@@ -848,13 +845,10 @@ def main(ref: str) -> None:
         shutil.copy2(slides_out, latest)
         print(f"  [copy]   latest.html ← {run_tag}/slides.html")
         if _ui:
-            write_status("done", "done", "Ready",
-                         ref=ref, run_tag=run_tag,
-                         latest=f"http://127.0.0.1:{STATUS_PORT}/latest.html")
+            # Write a done-marker so the UI can detect completion via HEAD request
+            (RANDOM_DIR / f"{run_tag}.done").write_text(run_tag)
     else:
         print("[batch] WARN: slides.html not found, skipping copy")
-        if _ui:
-            write_status("error", "slides", "slides.html not produced", ref=ref)
     print("[batch] Done.")
 
 

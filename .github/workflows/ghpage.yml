@@ -16,6 +16,12 @@ on:
 # This is the workflow wired to the ghpage UI's CTA.
 # For the full render pipeline see ../workflows/render.yml
 
+# Only one render at a time — queued dispatches wait; a second concurrent
+# trigger cancels the in-progress run rather than stacking unbounded jobs.
+concurrency:
+  group: ghpage-render
+  cancel-in-progress: true
+
 defaults:
   run:
     working-directory: rac_pymol
@@ -66,35 +72,19 @@ jobs:
           sleep 2
           conda run -n pymol-ci python pymol-workshop/enzyme.py
 
-      - name: "MAIN: run batch pipeline"
+      - name: "MAIN: run batch + push to gh-pages"
         shell: bash -el {0}
         env:
           DISPLAY: ":99"
           LIBGL_ALWAYS_SOFTWARE: "1"
           MESA_GL_VERSION_OVERRIDE: "3.3"
           BATCH_N_SUBJECTS: "2"
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           Xvfb :99 -screen 0 1280x1024x24 &
           sleep 2
-          conda run -n pymol-ci python pymol-workshop/batch.py "${{ github.event.inputs.scene_id }}" 2>&1 | tee .rendering/run.log
-
-      - name: Package rendered output
-        shell: bash -el {0}
-        run: python .github/scripts/download_zip.py
-
-      - name: Upload HTML slide deck
-        uses: actions/upload-artifact@v4
-        with:
-          name: slide-deck-html
-          path: rac_pymol/.rendering/random/latest.html
-          retention-days: 14
-
-      - name: Upload zipped slide deck
-        uses: actions/upload-artifact@v4
-        with:
-          name: slide-deck-zip
-          path: rac_pymol/.rendering/random/latest.zip
-          retention-days: 14
+          bash .github/scripts/remote.sh "${{ github.event.inputs.scene_id }}" 2>&1 | tee .rendering/run.log
 
       - name: Upload terminal log
         uses: actions/upload-artifact@v4

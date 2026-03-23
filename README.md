@@ -1,6 +1,10 @@
 # Rendering as Code with PyMOL
 
-A minimal Python project for "Rendering as Code with PyMOL".
+A Python project for "Rendering as Code with PyMOL".   
+### [**`Render Scenes ↗`**](https://ststevanovic.github.io/rac-pymol/)
+
+<!-- ## [**`Try Scene Creator ↗`**](https://ststevanovic.github.io/rac-pymol/) -->
+## 
 
 ## Architecture
 
@@ -102,4 +106,10 @@ python -m venv .venv; .\.venv\Scripts\Activate.ps1; pip install --upgrade pip se
 
 ```bash
 python pymol-workshop/simple.py
+```
+
+### 3. Local Render Server   
+Use it to apply scenography from local environment  
+```bash 
+bash .github/scripts/setup_local.sh && bash .github/scripts/local.sh
 ```
