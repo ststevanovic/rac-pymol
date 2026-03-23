@@ -256,65 +256,106 @@ async function executeGHAction() {
 async function pollForRunId(token, scene, dispatchedAt) {
   const runsUrl = `https://api.github.com/repos/${REPO}/actions/runs?per_page=10`;
   let attempts = 0;
+  const MAX_ATTEMPTS = 60;           // 60 × 3s = 3 min ceiling
 
   _pollTimer = setInterval(async () => {
     attempts++;
+    if (attempts > MAX_ATTEMPTS) {
+      clearInterval(_pollTimer);
+      log("Polling timed out after 3 min.", "err");
+      cbeWrite("✘  Timed out — check https://github.com/" + REPO + "/actions", "prompt");
+      setStatus("timeout");
+      document.getElementById("cta").disabled = false;
+      return;
+    }
+
     try {
       const r = await fetch(runsUrl, {
         headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
       });
+      if (!r.ok) {
+        cbeWrite(`  poll ${attempts}: HTTP ${r.status}`, "");
+        return;
+      }
       const data = await r.json();
-      // Only match 'ui' workflow runs created AFTER we dispatched — avoids stale runs
-      // Note: w.name is the workflow-level name: field ("ui"), not the job name
-      // Subtract 15s buffer: GitHub created_at can lag behind browser clock
-      const cutoff = new Date(new Date(dispatchedAt).getTime() - 15000);
+
+      // Match ANY workflow_dispatch run created after we dispatched.
+      // Use 60s buffer — GH created_at lags behind real wall-clock.
+      const cutoff = new Date(new Date(dispatchedAt).getTime() - 60000);
       const run = (data.workflow_runs || []).find(
-        w => w.name === "ui" && new Date(w.created_at) >= cutoff
+        w => w.event === "workflow_dispatch" && new Date(w.created_at) >= cutoff
       );
-      if (!run) return;
+
+      if (!run) {
+        if (attempts % 5 === 0) cbeWrite(`  poll ${attempts}/${MAX_ATTEMPTS}: waiting for run…`);
+        return;
+      }
+
       if (!_runId) {
         _runId = run.id;
-        log(`Run #${_runId} started — status: ${run.status}`, "info");
-        cbeWrite(`Run ID: ${_runId}  status: ${run.status}`);
-        cbeWrite(`Logs  : https://github.com/${REPO}/actions/runs/${_runId}`);
+        log(`Run #${_runId} — ${run.status}`, "info");
+        cbeWrite(`Run ID : ${_runId}`);
+        cbeWrite(`Status : ${run.status}`);
+        cbeWrite(`Logs   : https://github.com/${REPO}/actions/runs/${_runId}`);
+      } else {
+        // Update status on each tick so the user sees progress
+        if (attempts % 3 === 0) cbeWrite(`  poll ${attempts}: ${run.status}…`);
       }
-      if (run.status === "completed") {
-        clearInterval(_pollTimer);
-        const conclusion = run.conclusion;
-        log(`Run #${_runId} ${conclusion}.`, conclusion === "success" ? "ok" : "err");
-        setStatus(conclusion);
-        cbeWrite(`\n── Job ${conclusion.toUpperCase()} ──`);
-        if (conclusion === "success") fetchArtifacts(token);
-        document.getElementById("cta").disabled = false;
+
+      if (run.status !== "completed") return;
+
+      clearInterval(_pollTimer);
+      const conclusion = run.conclusion;
+      log(`Run #${_runId} → ${conclusion}`, conclusion === "success" ? "ok" : "err");
+      setStatus(conclusion);
+      cbeWrite(`\n── ${conclusion.toUpperCase()} ──`);
+
+      if (conclusion === "success") {
+        // gh-pages deploy takes a few seconds after the run completes.
+        // Wait before reading index.json.
+        cbeWrite("Waiting for gh-pages deploy…");
+        await new Promise(r => setTimeout(r, 8000));
+        await fetchArtifacts(token);
       }
-      if (attempts > 40) {
-        clearInterval(_pollTimer);
-        log("Polling timed out after 2 min.", "err");
-        document.getElementById("cta").disabled = false;
-      }
-    } catch (e) { /* network hiccup — keep polling */ }
+
+      document.getElementById("cta").disabled = false;
+    } catch (e) {
+      cbeWrite(`  poll ${attempts}: ${e.message}`, "err");
+    }
   }, 3000);
 }
 
 // ── resolve slides URL from gh-pages/index.json ───────────────
 async function fetchArtifacts(token) {
-  const indexUrl = `https://api.github.com/repos/${REPO}/contents/index.json?ref=gh-pages&_=${Date.now()}`;
-  try {
-    const r = await fetch(indexUrl, {
-      cache: "no-store",
-      headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
-    });
-    if (!r.ok) { log("index.json not found on gh-pages yet.", "err"); return; }
-    const envelope = await r.json();
-    const data = JSON.parse(atob(envelope.content.replace(/\n/g, "")));
-    const tag  = data.latest;
-    if (!tag) { log("index.json has no 'latest' field.", "err"); return; }
-    const slidesUrl = `https://${REPO.split("/")[0]}.github.io/${REPO.split("/")[1]}/${tag}/slides.html`;
-    log(`Slides → ${slidesUrl}`, "ok");
-    cbeWrite(`slides: ${slidesUrl}`, "prompt");
-    setTagLabel(tag);
-    enableButtons(slidesUrl, null);
-  } catch (e) { log(`index.json fetch failed: ${e.message}`, "err"); }
+  // Retry up to 4 times — gh-pages content API can be stale
+  for (let retry = 0; retry < 4; retry++) {
+    try {
+      const indexUrl = `https://api.github.com/repos/${REPO}/contents/index.json?ref=gh-pages&_=${Date.now()}`;
+      const r = await fetch(indexUrl, {
+        cache: "no-store",
+        headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
+      });
+      if (!r.ok) {
+        cbeWrite(`  index.json attempt ${retry + 1}: HTTP ${r.status}`);
+        await new Promise(r => setTimeout(r, 5000));
+        continue;
+      }
+      const envelope = await r.json();
+      const data = JSON.parse(atob(envelope.content.replace(/\n/g, "")));
+      const tag  = data.latest;
+      if (!tag) { log("index.json has no 'latest' field.", "err"); return; }
+
+      const slidesUrl = `https://${REPO.split("/")[0]}.github.io/${REPO.split("/")[1]}/${tag}/slides.html`;
+      log(`Slides → ${slidesUrl}`, "ok");
+      cbeWrite(`\n✔  slides: ${slidesUrl}`, "prompt");
+      enableButtons(slidesUrl, null);
+      return;
+    } catch (e) {
+      cbeWrite(`  index.json attempt ${retry + 1}: ${e.message}`);
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
+  log("Could not read index.json after 4 retries.", "err");
 }
 
 // ── artifact actions ──────────────────────────────────────────
