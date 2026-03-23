@@ -1,0 +1,800 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAC-PyMOL · Render</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  /* ── palette: exact batch.py Vis reversed ────────────────── */
+  /* dark origin:  BG=#1c0524  SURF=#270833  FG=#ffffff         */
+  /*               HI=#AB0061  HI2=#8b0a5e   GRID=#4a1a6b       */
+  /*               MUTE=#b078a8                                  */
+  :root {
+    --bg:      #ffffff;
+    --surf:    #f5edf7;
+    --border:  #b078a8;
+    --hi:      #AB0061;
+    --hi2:     #8b0a5e;
+    --fg:      #1c0524;
+    --mute:    #b078a8;
+    --cbe-bg:  #1c0524;
+    --cbe-fg:  #ffffff;
+    --cbe-hi:  #AB0061;
+    --cbe-dim: #4a1a6b;
+    --green:   #166534;
+  }
+
+  html, body {
+    height: 100vh; width: 100vw; overflow: hidden;
+    background: var(--bg); color: var(--fg);
+    font-family: 'Inter', system-ui, sans-serif; font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── outer shell ─────────────────────────────────────────── */
+  #app { display: flex; flex-direction: column; height: 100vh; width: 100vw; }
+
+  /* ── header ──────────────────────────────────────────────── */
+  #header {
+    flex-shrink: 0; padding: 0 28px; height: 48px;
+    background: var(--surf); border-bottom: 2px solid var(--hi);
+    display: flex; align-items: center; gap: 14px;
+  }
+  #header h1 {
+    font-size: 17px; font-weight: 800; color: var(--hi);
+    letter-spacing: -0.03em; font-family: 'Inter', sans-serif;
+  }
+  #header .sub {
+    font-size: 10px; color: var(--mute);
+    font-family: 'JetBrains Mono', monospace; letter-spacing: 0.04em;
+  }
+  #header .dot { color: var(--border); }
+
+  /* ── body: two equal panes ───────────────────────────────── */
+  #body { flex: 1 1 0; min-height: 0; display: flex; }
+
+  /* ── LEFT pane ───────────────────────────────────────────── */
+  #left {
+    flex: 1 1 0; min-width: 0; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    border-right: 1px solid var(--border);
+    overflow: hidden;
+    /* subtle radial gradient background flow */
+    background: radial-gradient(ellipse 70% 60% at 20% 80%, #f5edf7 0%, #ffffff 70%);
+  }
+
+  /* SVG icon — sits above the form heading, centred */
+  #scene-icon {
+    width: 88%;
+    opacity: 0.84; pointer-events: none;
+    display: block; margin: 0 auto 2px;
+  }
+
+  /* form card: 80% of pane width */
+  #form-card {
+    position: relative; z-index: 1;
+    width: 80%; max-width: 480px;
+    display: flex; flex-direction: column; gap: 18px;
+  }
+
+  /* form title block */
+  .form-heading { margin-bottom: 4px; }
+  .form-heading h2 {
+    font-size: 22px; font-weight: 800; color: var(--fg);
+    letter-spacing: -0.04em; line-height: 1.1;
+  }
+  .form-heading h2 span { color: var(--hi); }
+  .form-heading p {
+    margin-top: 5px; font-size: 11px; color: var(--mute);
+    font-weight: 500; letter-spacing: 0.01em; line-height: 1.5;
+  }
+
+  .field { display: flex; flex-direction: column; gap: 5px; }
+
+  label {
+    font-size: 10px; font-weight: 700; color: var(--mute);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    font-family: 'Inter', sans-serif;
+  }
+  .field-subtitle {
+    font-size: 10px; color: var(--mute); line-height: 1.5;
+    font-weight: 400;
+  }
+  input[type=text] {
+    width: 100%; padding: 9px 12px;
+    border: 1.5px solid var(--border); border-radius: 7px;
+    background: var(--surf); color: var(--fg);
+    font-size: 13px; font-family: 'JetBrains Mono', monospace;
+    font-weight: 400; outline: none;
+    transition: border-color 0.18s, box-shadow 0.18s;
+  }
+  input[type=text]:focus {
+    border-color: var(--hi);
+    box-shadow: 0 0 0 3px rgba(171,0,97,0.1);
+  }
+  input[type=text]::placeholder { color: var(--border); }
+
+  #cta {
+    padding: 11px 0; background: var(--hi); color: #fff;
+    border: none; border-radius: 7px; width: 100%;
+    font-size: 14px; font-weight: 700; font-family: 'Inter', sans-serif;
+    cursor: pointer; letter-spacing: 0.04em;
+    transition: background 0.18s, transform 0.1s, box-shadow 0.18s;
+    box-shadow: 0 4px 18px rgba(171,0,97,0.25);
+  }
+  #cta:hover {
+    background: var(--hi2);
+    box-shadow: 0 6px 24px rgba(139,10,94,0.35);
+    transform: translateY(-1px);
+  }
+  #cta:active { transform: translateY(0); }
+  #cta:disabled { background: var(--mute); box-shadow: none; cursor: not-allowed; transform: none; }
+
+  /* ── RIGHT pane ──────────────────────────────────────────── */
+  #right {
+    flex: 1 1 0; min-width: 0; position: relative;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+    background: radial-gradient(ellipse 65% 55% at 80% 20%, #f5edf7 0%, #ffffff 65%);
+  }
+
+
+
+  /* CBE+log box: 80% of pane width */
+  #cbe-wrap {
+    position: relative; z-index: 1;
+    width: 80%; max-width: 480px;
+    display: flex; flex-direction: column;
+    border: 1.5px solid var(--border); border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 4px 28px rgba(28,5,36,0.07);
+  }
+
+  /* title bar */
+  #cbe-label {
+    background: var(--surf); padding: 8px 14px;
+    font-size: 12px; font-weight: 700; color: var(--mute);
+    text-transform: uppercase; letter-spacing: 0.1em;
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    font-family: 'Inter', sans-serif;
+  }
+  #cbe-label .cbe-status {
+    font-size: 11px; font-weight: 500; color: var(--border);
+    text-transform: none; letter-spacing: 0; font-family: 'JetBrains Mono', monospace;
+  }
+
+  /* dark console */
+  #cbe {
+    height: 200px; background: var(--cbe-bg);
+    color: var(--cbe-fg); font-family: 'JetBrains Mono', monospace; font-size: 13px;
+    line-height: 1.65; padding: 10px 14px; overflow-y: auto; position: relative;
+    white-space: pre-wrap; word-break: break-all;
+  }
+  #cbe .prompt { color: var(--cbe-hi); font-weight: 600; }
+  #cbe-placeholder { color: #ffffff; opacity: 0.32; font-style: italic; padding: 0; margin: 0; display: block; }
+
+  /* event log */
+  #event-log {
+    background: var(--surf); border-top: 1px solid var(--border);
+    padding: 8px 14px; height: 96px; overflow-y: auto;
+    font-size: 12.5px; font-family: 'JetBrains Mono', monospace;
+    line-height: 1.65; color: var(--mute);
+  }
+  .ev-line { padding: 1px 0; }
+  .ev-line.ok   { color: var(--green); }
+  .ev-line.err  { color: #b91c1c; }
+  .ev-line.info { color: var(--hi); }
+
+  /* CBE action buttons — hidden until job completes */
+  #cbe-actions {
+    display: none; position: absolute; bottom: 8px; right: 10px;
+    gap: 7px; align-items: center;
+  }
+  .cbe-btn-main {
+    padding: 5px 14px; background: var(--hi); color: #fff;
+    border: none; border-radius: 5px; font-size: 11px; font-weight: 700;
+    font-family: 'Inter', sans-serif; cursor: pointer;
+    transition: background 0.15s;
+  }
+  .cbe-btn-main:hover { background: var(--hi2); }
+  .cbe-btn-main:disabled { background: var(--cbe-dim); cursor: not-allowed; }
+  .cbe-btn-icon {
+    padding: 5px 9px; background: #270833; color: var(--cbe-hi);
+    border: 1px solid var(--cbe-hi); border-radius: 5px;
+    font-size: 14px; cursor: pointer; transition: background 0.15s;
+  }
+  .cbe-btn-icon:hover { background: var(--hi); color: #fff; }
+  .cbe-btn-icon:disabled { opacity: 0.3; cursor: not-allowed; }
+
+  /* ── confirm overlay ─────────────────────────────────────── */
+  #confirm-overlay {
+    display: none; position: fixed; inset: 0;
+    background: rgba(28,5,36,0.55); backdrop-filter: blur(4px);
+    z-index: 100; align-items: center; justify-content: center;
+  }
+  #confirm-overlay.show { display: flex; }
+  #confirm-box {
+    background: #fff; border: 2px solid var(--hi);
+    border-radius: 12px; padding: 26px 30px; max-width: 380px; width: 90%;
+    box-shadow: 0 12px 48px rgba(171,0,97,0.2);
+  }
+  #confirm-box h2 {
+    font-size: 16px; font-weight: 800; color: var(--hi);
+    margin-bottom: 8px; letter-spacing: -0.02em;
+    font-family: 'Inter', sans-serif;
+  }
+  #confirm-box p {
+    font-size: 12px; color: var(--mute); margin-bottom: 14px; line-height: 1.6;
+    font-weight: 400;
+  }
+  .confirm-params {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    background: var(--surf); padding: 8px 11px; border-radius: 6px;
+    border: 1px solid var(--border); margin-bottom: 16px;
+    color: var(--fg); word-break: break-all; line-height: 1.7;
+  }
+  .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .btn-cancel {
+    padding: 7px 16px; background: var(--bg); color: var(--mute);
+    border: 1.5px solid var(--border); border-radius: 6px;
+    cursor: pointer; font-size: 12px; font-weight: 600;
+    font-family: 'Inter', sans-serif;
+    transition: border-color 0.15s;
+  }
+  .btn-cancel:hover { border-color: var(--mute); }
+  .btn-go {
+    padding: 7px 16px; background: var(--hi); color: #fff;
+    border: none; border-radius: 6px; cursor: pointer;
+    font-size: 12px; font-weight: 700; font-family: 'Inter', sans-serif;
+    transition: background 0.15s;
+  }
+  .btn-go:hover { background: var(--hi2); }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── header ── -->
+  <div id="header">
+    <h1>RAC&#8202;·&#8202;PyMOL</h1>
+    <span class="dot">|</span>
+    <span class="sub">rendering-as-code &nbsp;·&nbsp; scenography creator </span>
+    <span style="flex:1"></span>
+    <label style="font-size:10px;color:var(--mute);font-family:'JetBrains Mono',monospace;
+                  display:flex;align-items:center;gap:6px;cursor:pointer;">
+      <input type="checkbox" id="toggle-local" style="accent-color:var(--hi);cursor:pointer;">
+      <span id="mode-label">--ghaction</span>
+    </label>
+  </div>
+
+  <div id="body">
+
+    <!-- ══ LEFT pane ══ -->
+    <div id="left">
+
+      <div id="form-card">
+
+        <!--
+          Icon: quadrant JSON-mockup card (shadowed) + 45° isometric cube
+          behind it holding molecular point-cloud nodes.
+          Single vector, sits above the heading, width = 50% of card.
+        -->
+        <!--
+          Horizontal process flow:
+            JSON card (100×100)  ──top──  isometric cube front-face (110×110, 10% bigger)
+                                 ──bot──
+          Card top-right → cube top-left node   (y = card.top  = cube.top)
+          Card bot-right → cube bot-left node   (y = card.bot  = cube.bot)
+          Cube is isometric: top-face rhombus visible, left+right side faces.
+          viewBox: 340 wide × 130 tall.  Card: x=10,y=15 w=100 h=100.
+          Gap (connectors): x=110 → x=160.  Cube left-edge x=160.
+          Cube: front-face rhombus centre=(215,65), half-w=55, half-h=55 → but isometric.
+          Isometric mapping: cube edge=55.
+            TL = (160, 65)   TR = (215, 37)   mid = (270, 65)   BL = (215, 93)
+          Top face: (160,65) (215,37) (270,65) (215,93)
+          Left face below: TL(160,65) BL(215,93) BL-bot(215,148) TL-bot(160,120)
+          Right face below: TR(215,37) R(270,65) R-bot(270,120) TR-bot(215,93)
+          Actually simpler — use a flat isometric with:
+            Top-left = (160, 37)   Top-right = (270, 37+28=65... )
+          Let cube edge = 55. Isometric flat-top:
+            top-left  TL = (160, 64)      ← left visible corner
+            top       T  = (215, 36)      ← apex
+            top-right TR = (270, 64)      ← right corner
+            mid       M  = (215, 92)      ← centre of top face / top of bottom faces
+            bot-left  BL = (160, 120)     ← bottom-left
+            bottom    B  = (215, 148)     ← bottom apex  (not shown, behind)
+            bot-right BR = (270, 120)     ← bottom-right
+          Connector lines: card top-right (110,15) → TL (160,36+gap)
+                           card bot-right (110,115)→ BL (160,120)
+        -->
+        <svg id="scene-icon" viewBox="0 0 340 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <filter id="cshadow" x="-20%" y="-20%" width="160%" height="160%">
+              <feDropShadow dx="2" dy="4" stdDeviation="4" flood-color="#1c0524" flood-opacity="0.18"/>
+            </filter>
+            <clipPath id="clp-top">  <polygon points="160,64 215,36 270,64 215,92"/></clipPath>
+            <clipPath id="clp-left"> <polygon points="160,64 215,92 215,148 160,120"/></clipPath>
+            <clipPath id="clp-right"><polygon points="270,64 215,92 215,148 270,120"/></clipPath>
+          </defs>
+
+          <!--
+            LAYOUT (viewBox 340×160, all vertically centred at y=80):
+            ┌─────────────┐    ──top──    ╔═══╦═══╗
+            │  JSON card  │              ║top ║   ║
+            │  100 × 100  │              ╠═══╣   ║  cube front ~110×110
+            │             │    ──bot──   ║lft║rgt║
+            └─────────────┘              ╚═══╩═══╝
+            card: x=10, y=30, w=100, h=100   → right edge x=110
+            gap zone: x=110..162 (52px, arrowhead midpoint ~136)
+            cube TL=(162,24)  T=(217,52)  TR=(272,24)  ← top of cube visible face
+                 ML=(162,80)  M=(217,108) MR=(272,80)  ← below top face (front face top)
+                 BL=(162,136) B=(217,108) BR=(272,136) ← bottom
+            Actually use a simpler isometric:
+              Top face: TL(162,52) T(217,24) TR(272,52) M(217,80)
+              Left face: TL(162,52) ML(162,108) BL(217,136) M(217,80)
+              Right face: TR(272,52) MR(272,108) BR(217,136) M(217,80)
+            → card top-right (110,30) connects to TL (162,52)  [top line]
+            → card bot-right (110,130) connects to ML (162,108) [bot line]
+          -->
+
+          <!-- ── JSON card (100×100) ── -->
+          <rect x="10" y="30" width="100" height="100" rx="6"
+                fill="#ffffff" filter="url(#cshadow)" stroke="#b078a8" stroke-width="1.2"/>
+          <!-- header bar -->
+          <rect x="10" y="30" width="100" height="16" rx="6" fill="#f5edf7"/>
+          <rect x="10" y="40"  width="100" height="6" fill="#f5edf7"/>
+          <!-- traffic dots -->
+          <circle cx="22" cy="38" r="3" fill="#AB0061" opacity="0.75"/>
+          <circle cx="31" cy="38" r="3" fill="#b078a8" opacity="0.55"/>
+          <circle cx="40" cy="38" r="3" fill="#b078a8" opacity="0.4"/>
+          <!-- JSON line stubs — 6 rows -->
+          <rect x="18" y="54" width="18" height="4" rx="2" fill="#AB0061" opacity="0.6"/>
+          <rect x="40" y="54" width="40" height="4" rx="2" fill="#1c0524" opacity="0.16"/>
+          <rect x="18" y="64" width="22" height="4" rx="2" fill="#b078a8" opacity="0.5"/>
+          <rect x="44" y="64" width="34" height="4" rx="2" fill="#1c0524" opacity="0.14"/>
+          <rect x="18" y="74" width="14" height="4" rx="2" fill="#AB0061" opacity="0.48"/>
+          <rect x="36" y="74" width="50" height="4" rx="2" fill="#1c0524" opacity="0.12"/>
+          <rect x="18" y="84" width="24" height="4" rx="2" fill="#b078a8" opacity="0.44"/>
+          <rect x="46" y="84" width="30" height="4" rx="2" fill="#1c0524" opacity="0.11"/>
+          <rect x="18" y="94" width="12" height="4" rx="2" fill="#AB0061" opacity="0.38"/>
+          <rect x="34" y="94" width="54" height="4" rx="2" fill="#1c0524" opacity="0.10"/>
+          <rect x="18" y="104" width="20" height="4" rx="2" fill="#b078a8" opacity="0.32"/>
+          <rect x="42" y="104" width="44" height="4" rx="2" fill="#1c0524" opacity="0.09"/>
+          <!-- card right-edge connector dots -->
+          <circle cx="110" cy="30"  r="3" fill="#AB0061" opacity="0.7"/>
+          <circle cx="110" cy="130" r="3" fill="#b078a8" opacity="0.6"/>
+
+          <!-- ── HORIZONTAL CONNECTOR LINES (top + bottom) ── -->
+          <!-- top:    card top-right (110,30)  → cube TL (162,52) -->
+          <line x1="110" y1="30"  x2="162" y2="52"
+                stroke="#AB0061" stroke-width="1.4" opacity="0.6"/>
+          <!-- bottom: card bot-right (110,130) → cube ML (162,108) -->
+          <line x1="110" y1="130" x2="162" y2="108"
+                stroke="#b078a8" stroke-width="1.4" opacity="0.5"/>
+          <!-- arrowheads at cube entry -->
+          <polygon points="162,52  154,46  154,58"  fill="#AB0061" opacity="0.55"/>
+          <polygon points="162,108 154,102 154,114" fill="#b078a8" opacity="0.45"/>
+
+          <!-- ── ISOMETRIC CUBE (edge≈55, 10% bigger than card ≈110) ── -->
+          <!-- Vertices:
+               T  = (217, 24)   apex top
+               TL = (162, 52)   left corner of top face  [also top-left connector target]
+               TR = (272, 52)   right corner of top face
+               M  = (217, 80)   centre diamond (middle of top face)
+               ML = (162, 108)  left bottom of side faces  [also bot connector target]
+               MR = (272, 108)  right bottom of side faces
+               B  = (217, 136)  bottom apex
+          -->
+          <!-- top face (rhombus) -->
+          <polygon points="162,52 217,24 272,52 217,80"
+                   fill="#ede0f4" opacity="0.78" stroke="#AB0061" stroke-width="1.6"/>
+          <!-- left face -->
+          <polygon points="162,52 217,80 217,136 162,108"
+                   fill="#f5edf7" opacity="0.55" stroke="#b078a8" stroke-width="1.3"/>
+          <!-- right face -->
+          <polygon points="272,52 217,80 217,136 272,108"
+                   fill="#f5edf7" opacity="0.38" stroke="#b078a8" stroke-width="1.3"/>
+
+          <!-- molecular nodes inside cube faces -->
+          <g clip-path="url(#clp-top)" opacity="0.65">
+            <circle cx="192" cy="48" r="3.5" fill="#AB0061"/>
+            <circle cx="217" cy="60" r="3"   fill="#b078a8"/>
+            <circle cx="242" cy="44" r="3.5" fill="#AB0061"/>
+            <circle cx="228" cy="70" r="3"   fill="#b078a8"/>
+            <line x1="192" y1="48" x2="217" y2="60" stroke="#b078a8" stroke-width="1"/>
+            <line x1="217" y1="60" x2="242" y2="44" stroke="#AB0061" stroke-width="1"/>
+            <line x1="217" y1="60" x2="228" y2="70" stroke="#b078a8" stroke-width="0.9"/>
+          </g>
+          <g clip-path="url(#clp-left)" opacity="0.6">
+            <circle cx="178" cy="88"  r="3.5" fill="#AB0061"/>
+            <circle cx="196" cy="112" r="3"   fill="#b078a8"/>
+            <circle cx="210" cy="92"  r="3.5" fill="#AB0061"/>
+            <circle cx="185" cy="126" r="3"   fill="#b078a8"/>
+            <line x1="178" y1="88"  x2="210" y2="92"  stroke="#b078a8" stroke-width="1"/>
+            <line x1="210" y1="92"  x2="196" y2="112" stroke="#AB0061" stroke-width="1"/>
+            <line x1="196" y1="112" x2="185" y2="126" stroke="#b078a8" stroke-width="0.9"/>
+          </g>
+          <g clip-path="url(#clp-right)" opacity="0.5">
+            <circle cx="240" cy="88"  r="3.5" fill="#b078a8"/>
+            <circle cx="258" cy="112" r="3"   fill="#AB0061"/>
+            <circle cx="248" cy="96"  r="3"   fill="#b078a8"/>
+            <line x1="240" y1="88"  x2="258" y2="112" stroke="#b078a8" stroke-width="1"/>
+            <line x1="240" y1="88"  x2="248" y2="96"  stroke="#AB0061" stroke-width="0.9"/>
+          </g>
+
+          <!-- cube key vertex nodes -->
+          <circle cx="217" cy="24"  r="4"   fill="#AB0061" opacity="0.9"/>
+          <circle cx="162" cy="52"  r="4"   fill="#AB0061" opacity="0.85"/>
+          <circle cx="272" cy="52"  r="3.5" fill="#b078a8" opacity="0.8"/>
+          <circle cx="217" cy="80"  r="3.5" fill="#b078a8" opacity="0.75"/>
+          <circle cx="162" cy="108" r="4"   fill="#b078a8" opacity="0.8"/>
+          <circle cx="272" cy="108" r="3.5" fill="#b078a8" opacity="0.7"/>
+          <circle cx="217" cy="136" r="4"   fill="#AB0061" opacity="0.75"/>
+        </svg>
+
+        <div class="form-heading">
+          <h2>Scene <span>Render</span></h2>
+          <p id="form-subtitle">Dispatch a headless PyMOL render via GitHub Actions.</p>
+        </div>
+
+        <div class="field">
+          <label for="f-scenography">Scenography</label>
+          <input type="text" id="f-scenography" placeholder="default: scenography.db">
+          <div class="field-subtitle">Public URL supported.</div>
+        </div>
+
+        <div class="field">
+          <label for="f-scene-id">Scene ID</label>
+          <input type="text" id="f-scene-id" value="9ax6" placeholder="e.g. 9ax6">
+        </div>
+
+        <button id="cta" onclick="onRenderClick()">Render</button>
+
+      </div>
+    </div>
+
+    <!-- ══ RIGHT pane ══ -->
+    <div id="right">
+
+      <div id="cbe-wrap">
+
+        <div id="cbe-label">
+          <span>console output</span>
+          <span class="cbe-status" id="cbe-status">idle</span>
+        </div>
+
+        <div id="cbe">
+          <span id="cbe-placeholder">▌ Console output will appear here once the render job starts.</span>
+          <div id="cbe-actions">
+            <button class="cbe-btn-main" id="btn-html-view"
+                    disabled onclick="openHtmlView()">HTML View</button>
+            <button class="cbe-btn-icon" id="btn-download"
+                    title="Download ZIP" disabled onclick="downloadZip()">&#8659;</button>
+          </div>
+        </div>
+
+        <div id="event-log">
+          <div class="ev-line">Ready.</div>
+        </div>
+
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- confirm overlay (Ask before execution) -->
+<div id="confirm-overlay">
+  <div id="confirm-box">
+    <h2>Confirm Render</h2>
+    <p>This will dispatch a GitHub Actions workflow. Please review the parameters:</p>
+    <div class="confirm-params" id="confirm-params-text"></div>
+    <div class="confirm-actions">
+      <button class="btn-cancel" onclick="closeConfirm()">Cancel</button>
+      <button class="btn-go"     onclick="executeRender()">Run</button>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── config ────────────────────────────────────────────────────────────────
+// Fill these in for your repo: owner/repo and a fine-grained PAT stored as
+// a GH Pages secret (or just set REPO here for the public dispatch endpoint).
+const REPO         = "ststevanovic/rac-pymol";
+const WORKFLOW_ID  = "ghpage";   // matches .github/w/ghpage filename
+const GH_API       = `https://api.github.com/repos/${REPO}/actions/workflows/${WORKFLOW_ID}/dispatches`;
+
+// Artifact download base URL — updated after run completes (via polling).
+let _runId      = null;
+let _htmlArtUrl = null;
+let _zipArtUrl  = null;
+let _pollTimer  = null;
+
+// ── mode toggle (--local / --ghaction) ────────────────────────────────────
+// In --local mode the page just probes ./rendering/random/latest.html on the
+// same origin instead of dispatching a GitHub Actions workflow.
+let _mode = "ghaction";
+
+document.getElementById("toggle-local").addEventListener("change", function () {
+  _mode = this.checked ? "local" : "ghaction";
+  document.getElementById("mode-label").textContent = this.checked ? "--local" : "--ghaction";
+  const sub = document.getElementById("form-subtitle");
+  if (sub) sub.textContent = this.checked
+    ? "Run batch.py locally — probes ./rendering/random/latest.html."
+    : "Dispatch a headless PyMOL render via GitHub Actions.";
+  log(`Mode → ${_mode}`, "info");
+});
+
+// ── event log ─────────────────────────────────────────────────────────────
+function log(msg, cls = "") {
+  const el = document.getElementById("event-log");
+  const line = document.createElement("div");
+  line.className = "ev-line " + cls;
+  const ts = new Date().toLocaleTimeString();
+  line.textContent = `[${ts}] ${msg}`;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+
+// ── CBE output ────────────────────────────────────────────────────────────────
+function cbeWrite(text, cls = "") {
+  const cbe = document.getElementById("cbe");
+  document.getElementById("cbe-placeholder")?.remove();
+  const span = document.createElement("span");
+  if (cls) span.className = cls;
+  span.textContent = text + "\n";
+  cbe.insertBefore(span, document.getElementById("cbe-actions"));
+  cbe.scrollTop = cbe.scrollHeight;
+}
+function setStatus(txt) {
+  const s = document.getElementById("cbe-status");
+  if (s) s.textContent = txt;
+}
+
+// ── enable output buttons (called from both local + ghaction paths) ───────
+function enableButtons(htmlUrl, zipUrl) {
+  _htmlArtUrl = htmlUrl;
+  _zipArtUrl  = zipUrl;
+  const actions = document.getElementById("cbe-actions");
+  actions.style.display = "flex";
+  document.getElementById("btn-html-view").disabled = false;
+  document.getElementById("btn-download").disabled  = zipUrl ? false : true;
+  log("Output ready — HTML View enabled.", "ok");
+  cbeWrite("Output ready.", "prompt");
+}
+
+// ── confirm overlay ───────────────────────────────────────────────────────
+function onRenderClick() {
+  const sceno = document.getElementById("f-scenography").value.trim();
+  const scene = document.getElementById("f-scene-id").value.trim();
+  if (!scene) { log("Scene ID is required.", "err"); return; }
+
+  // --local: skip confirm entirely, run directly
+  if (_mode === "local") { executeLocal(); return; }
+
+  const summary = `Scenography : ${sceno || "(repo default)"}\nScene ID    : ${scene}`;
+  document.getElementById("confirm-params-text").textContent = summary;
+  document.getElementById("confirm-overlay").classList.add("show");
+}
+
+function closeConfirm() {
+  document.getElementById("confirm-overlay").classList.remove("show");
+}
+
+// ── dispatch + poll ───────────────────────────────────────────────────────
+async function executeRender() {
+  closeConfirm();
+  if (_mode === "local") { executeLocal(); return; }
+  executeGHAction();
+}
+
+// ── local mode ────────────────────────────────────────────────────────────
+// batch.py starts an HTTP server on 8091 serving .rendering/random/.
+// We poll status.json every 2s and mirror progress to the live console.
+const LOCAL_STATUS = "http://127.0.0.1:8091/status.json";
+const LOCAL_HTML   = "http://127.0.0.1:8091/latest.html";
+
+let _localPollTimer = null;
+let _lastStep = null;
+
+function executeLocal() {
+  const scene = document.getElementById("f-scene-id").value.trim();
+  setStatus("waiting…");
+  document.getElementById("cbe-actions").style.display = "none";
+  document.getElementById("btn-download").style.display = "none";
+  _lastStep = null;
+
+  const cmd = `RAC_LOCAL_UI=1 .venv-batch/bin/python pymol-workshop/batch.py ${scene}`;
+  cbeWrite(`$ ${cmd}`, "prompt");
+  log(`Run in terminal: ${cmd}`, "info");
+  cbeWrite(`  Waiting for batch.py to start (30s timeout)…`);
+
+  // timeout: give up after 30s if server never responds
+  const WAIT_TIMEOUT_MS = 30_000;
+  const startedAt = Date.now();
+
+  // start polling status.json
+  let dots = 0;
+  if (_localPollTimer) clearInterval(_localPollTimer);
+  _localPollTimer = setInterval(async () => {
+    dots = (dots + 1) % 4;
+    const spinner = "⠋⠙⠹⠸".charAt(dots);
+
+    // timeout guard — only while still waiting for server to come up
+    if (_lastStep === null && Date.now() - startedAt > WAIT_TIMEOUT_MS) {
+      clearInterval(_localPollTimer);
+      cbeWrite(`✘  batch.py never started (30s timeout).`);
+      cbeWrite(`   Copy and run in your terminal:`);
+      cbeWrite(`   ${cmd}`, "prompt");
+      setStatus("timed out");
+      log("Timed out waiting for batch.py.", "err");
+      document.getElementById("cta").disabled = false;
+      return;
+    }
+
+    try {
+      const r = await fetch(LOCAL_STATUS, { cache: "no-store" });
+      if (!r.ok) { setStatus(`waiting${".".repeat(dots)}`); return; }
+      const s = await r.json();
+
+      // log when step changes
+      if (s.step !== _lastStep) {
+        _lastStep = s.step;
+        if (s.state === "running") {
+          cbeWrite(`${spinner}  ${s.msg}`);
+          setStatus(s.step);
+          log(s.msg, "info");
+        }
+      }
+
+      if (s.state === "done") {
+        clearInterval(_localPollTimer);
+        cbeWrite(`✔  Done — latest.html ready.`, "prompt");
+        setStatus("done");
+        log("Batch complete — output ready.", "ok");
+        enableButtons(s.latest || LOCAL_HTML, null);
+      } else if (s.state === "error") {
+        clearInterval(_localPollTimer);
+        cbeWrite(`✘  ${s.msg}`);
+        setStatus("error");
+        log(`Batch error: ${s.msg}`, "err");
+        document.getElementById("cta").disabled = false;
+      }
+    } catch (_) {
+      // server not up yet — batch.py hasn't started, keep waiting
+      setStatus(`waiting${".".repeat(dots)}`);
+    }
+  }, 2000);
+}
+
+// ── GH Actions dispatch ───────────────────────────────────────────────────
+async function executeGHAction() {
+  const sceno = document.getElementById("f-scenography").value.trim();
+  const scene = document.getElementById("f-scene-id").value.trim();
+
+  document.getElementById("cta").disabled = true;
+  setStatus("dispatching…");
+  log("Dispatching workflow…", "info");
+  cbeWrite(`$ github-actions dispatch  scene=${scene}  sceno=${sceno || "default"}`, "prompt");
+
+  // GitHub requires a PAT for workflow_dispatch. Store it in sessionStorage
+  // or prompt once. For public demos, this is typically handled via a proxy.
+  const token = sessionStorage.getItem("gh_pat") ||
+    prompt("GitHub PAT (workflow:write scope) — stored in sessionStorage only:");
+  if (token) sessionStorage.setItem("gh_pat", token);
+  if (!token) {
+    log("Cancelled — no PAT provided.", "err");
+    document.getElementById("cta").disabled = false;
+    return;
+  }
+
+  try {
+    const resp = await fetch(GH_API, {
+      method: "POST",
+      headers: {
+        "Authorization": `Bearer ${token}`,
+        "Accept": "application/vnd.github+json",
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        ref: "main",
+        inputs: { scenography: sceno, scene_id: scene },
+      }),
+    });
+
+    if (resp.status === 204) {
+      log("Workflow dispatched successfully.", "ok");
+      setStatus("running");
+      cbeWrite("Workflow queued. Polling for run ID…");
+      pollForRunId(token, scene);
+    } else {
+      const body = await resp.text();
+      log(`Dispatch failed: HTTP ${resp.status}`, "err");
+      cbeWrite(`ERROR: ${resp.status}\n${body}`);
+      document.getElementById("cta").disabled = false;
+    }
+  } catch (e) {
+    log(`Network error: ${e.message}`, "err");
+    cbeWrite(`Network error: ${e.message}`);
+    document.getElementById("cta").disabled = false;
+  }
+}
+
+// ── poll GitHub API for run status + log URL ──────────────────────────────
+async function pollForRunId(token, scene) {
+  const runsUrl = `https://api.github.com/repos/${REPO}/actions/runs?per_page=5`;
+  let attempts = 0;
+
+  _pollTimer = setInterval(async () => {
+    attempts++;
+    try {
+      const r = await fetch(runsUrl, {
+        headers: { "Authorization": `Bearer ${token}`,
+                   "Accept": "application/vnd.github+json" }
+      });
+      const data = await r.json();
+      const run = (data.workflow_runs || []).find(
+        w => w.name === "ghpage Render" && w.status !== "completed"
+             || w.status === "completed"
+      );
+      if (run && !_runId) {
+        _runId = run.id;
+        log(`Run #${_runId} started — status: ${run.status}`, "info");
+        cbeWrite(`Run ID: ${_runId}  status: ${run.status}`);
+        cbeWrite(`Logs  : https://github.com/${REPO}/actions/runs/${_runId}`);
+      }
+      if (run && run.status === "completed") {
+        clearInterval(_pollTimer);
+        const conclusion = run.conclusion;
+        log(`Run #${_runId} ${conclusion}.`, conclusion === "success" ? "ok" : "err");
+        setStatus(conclusion);
+        cbeWrite(`\n── Job ${conclusion.toUpperCase()} ──`);
+        if (conclusion === "success") fetchArtifacts(token);
+        document.getElementById("cta").disabled = false;
+      }
+      if (attempts > 60) {   // 5 min timeout at 5s interval
+        clearInterval(_pollTimer);
+        log("Polling timed out after 5 min.", "err");
+        document.getElementById("cta").disabled = false;
+      }
+    } catch (e) { /* network hiccup — keep polling */ }
+  }, 5000);
+}
+
+// ── fetch artifact URLs after completion ──────────────────────────────────
+async function fetchArtifacts(token) {
+  const artUrl = `https://api.github.com/repos/${REPO}/actions/runs/${_runId}/artifacts`;
+  try {
+    const r = await fetch(artUrl, {
+      headers: { "Authorization": `Bearer ${token}`,
+                 "Accept": "application/vnd.github+json" }
+    });
+    const data = await r.json();
+    for (const art of (data.artifacts || [])) {
+      if (art.name === "slide-deck-html") {
+        _htmlArtUrl = `https://github.com/${REPO}/actions/runs/${_runId}/artifacts/${art.id}`;
+      }
+      if (art.name === "slide-deck-zip") {
+        _zipArtUrl  = `https://github.com/${REPO}/actions/runs/${_runId}/artifacts/${art.id}`;
+      }
+    }
+    if (_htmlArtUrl) enableButtons(_htmlArtUrl, _zipArtUrl || null);
+  } catch (e) { log(`Artifact fetch failed: ${e.message}`, "err"); }
+}
+
+// ── artifact actions ──────────────────────────────────────────────────────
+function openHtmlView() {
+  if (_htmlArtUrl) window.open(_htmlArtUrl, "_blank");
+}
+function downloadZip() {
+  if (_zipArtUrl)  window.open(_zipArtUrl,  "_blank");
+}
+</script>
+</body>
+</html>

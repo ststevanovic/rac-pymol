@@ -103,9 +103,3 @@ python -m venv .venv; .\.venv\Scripts\Activate.ps1; pip install --upgrade pip se
 ```bash
 python pymol-workshop/simple.py
 ```
-
-Checkout the other workshop scripts in `pymol-workshop/`.
-
-
-
-

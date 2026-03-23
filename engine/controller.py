@@ -5,12 +5,20 @@ All methods are private by convention (_store_*, _load_*, _list_*) and
 are only called through BackendController's public facade.
 """
 
+import os
 import sqlite3
 from pathlib import Path
 
 from .models import SceneObject, SceneRecord
 
-DB_PATH = Path(__file__).parent.parent / "db" / "scenography.db"
+_DEFAULT_DB_PATH = Path(__file__).parent.parent / "db" / "scenography.db"
+
+def _resolve_db_path() -> Path:
+    """Return DB path: env var SCENOGRAPHY_DB_PATH if set, else repo default."""
+    env = os.environ.get("SCENOGRAPHY_DB_PATH", "").strip()
+    return Path(env) if env else _DEFAULT_DB_PATH
+
+DB_PATH = _resolve_db_path()
 
 
 class DBController:

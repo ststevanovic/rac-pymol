@@ -13,12 +13,14 @@ Run from rac_pymol/:
 
 import base64
 import datetime as dt
+import http.server
 import json
 import math
 import os
 import random
 import shutil
 import sys
+import threading
 import urllib.request
 from collections import defaultdict
 from pathlib import Path
@@ -60,6 +62,39 @@ N_SUBJECTS = int(os.environ.get("BATCH_N_SUBJECTS", "5"))
 
 RANDOM_DIR.mkdir(parents=True, exist_ok=True)
 CIF_CACHE.mkdir(exist_ok=True)
+
+STATUS_PORT = 8091
+STATUS_FILE = RANDOM_DIR / "status.json"
+
+
+def write_status(state: str, step: str, msg: str, **extra) -> None:
+    """Write .rendering/random/status.json so the local UI can poll progress."""
+    payload = {"state": state, "step": step, "msg": msg, **extra}
+    STATUS_FILE.write_text(json.dumps(payload))
+
+
+def start_local_server() -> None:
+    """Start a daemon HTTP server on STATUS_PORT serving RANDOM_DIR.
+    Silently skips if the port is already bound (e.g. second run).
+    """
+    import socketserver
+
+    class _Handler(http.server.SimpleHTTPRequestHandler):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, directory=str(RANDOM_DIR), **kw)
+
+        def log_message(self, *_):  # silence access log
+            pass
+
+    def _serve():
+        try:
+            with socketserver.TCPServer(("127.0.0.1", STATUS_PORT), _Handler) as httpd:
+                httpd.serve_forever()
+        except OSError:
+            pass  # port already in use — that's fine
+
+    threading.Thread(target=_serve, daemon=True).start()
+    print(f"[batch] local status server → http://127.0.0.1:{STATUS_PORT}/")
 
 
 # ── Vis — slide deck submodule ───────────────────────────────────────────────
@@ -700,6 +735,11 @@ def main(ref: str) -> None:
     styled and stored to DB).  Candidates are queried from RCSB and rendered
     with the same scene from DB.
     """
+    _ui = os.environ.get("RAC_LOCAL_UI") == "1"  # opt-in: live status server
+    if _ui:
+        start_local_server()
+        write_status("running", "init", f"Starting batch run for {ref}…", ref=ref)
+
     ctrl = PyMOLController()
     print(f"[batch] DB: {ctrl._db.path}")
 
@@ -736,6 +776,7 @@ def main(ref: str) -> None:
 
     # ── Phase A: reference — DB replay ───────────────────────────────────
     print(f"\n[batch] REFERENCE ── {ref}")
+    if _ui: write_status("running", "reference", f"Rendering reference: {ref}", ref=ref)
     ref_cif = locate_cif(ref, run_dir)
     if ref_cif is None:
         print(f"[batch] ERROR: cannot locate reference CIF {ref}")
@@ -765,11 +806,15 @@ def main(ref: str) -> None:
         candidate_ids = ["1lp3", "6j6j", "1mbo", "1hew", "1igt"]
 
     rendered = []
-    for pdb_id in candidate_ids:
+    for idx, pdb_id in enumerate(candidate_ids):
         cif = locate_cif(pdb_id, run_dir)
         if cif is None:
             continue
         print(f"\n[batch] CANDIDATE ── {pdb_id}")
+        if _ui:
+            write_status("running", "candidates",
+                         f"Rendering candidate {idx+1}/{len(candidate_ids)}: {pdb_id}",
+                         ref=ref, done=idx+1, total=len(candidate_ids))
         cmd.reinitialize()
         cmd.load(str(cif), pdb_id)
         cmd.viewport(800, 600)
@@ -794,6 +839,7 @@ def main(ref: str) -> None:
     print("  [state]  visual_system_state.json written")
 
     print("\n[batch] Generating slides …")
+    if _ui: write_status("running", "slides", "Building slide deck…", ref=ref)
     Vis.build_deck(molecules=[ref] + rendered, output_dir=run_dir)
 
     slides_out = run_dir / "slides.html"
@@ -801,8 +847,14 @@ def main(ref: str) -> None:
     if slides_out.exists():
         shutil.copy2(slides_out, latest)
         print(f"  [copy]   latest.html ← {run_tag}/slides.html")
+        if _ui:
+            write_status("done", "done", "Ready",
+                         ref=ref, run_tag=run_tag,
+                         latest=f"http://127.0.0.1:{STATUS_PORT}/latest.html")
     else:
         print("[batch] WARN: slides.html not found, skipping copy")
+        if _ui:
+            write_status("error", "slides", "slides.html not produced", ref=ref)
     print("[batch] Done.")
 
 
