@@ -471,6 +471,8 @@ let _htmlArtUrl = null;
 let _zipArtUrl  = null;
 let _pollTimer  = null;
 
+const GH_TOKEN = window._env?.pat || "__PAT_UI__";
+
 // ── mode toggle (--local / --ghaction) ────────────────────────────────────
 // In --local mode the page just probes ./rendering/random/latest.html on the
 // same origin instead of dispatching a GitHub Actions workflow.

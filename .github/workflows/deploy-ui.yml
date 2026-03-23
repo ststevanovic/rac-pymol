@@ -3,10 +3,7 @@ name: deploy-ui
 on:
   push:
     branches: [main]
-    paths:
-      - .github/index.html
-
-  workflow_dispatch:   # allow manual trigger (e.g. first bootstrap)
+  workflow_dispatch: # bootsrap)
 
 concurrency:
   group: deploy-ui
@@ -21,22 +18,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Inject PAT_UI into index.html
+        run: |
+          sed -i "s|__PAT_UI__|${{ secrets.PAT_UI }}|g" .github/index.html
+
       - name: Push index.html to gh-pages root
         run: |
           git config user.name  "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-          # fetch gh-pages so we can push to it
           git fetch origin gh-pages
-
-          # use a worktree so we never leave main
           git worktree add /tmp/ghpages origin/gh-pages
 
           cp .github/index.html /tmp/ghpages/index.html
 
           cd /tmp/ghpages
           git add index.html
-          # only commit if something actually changed
-          git diff --cached --quiet && echo "index.html unchanged, skipping." && exit 0
+          if git diff --cached --quiet; then
+            echo "index.html unchanged on gh-pages, skipping."
+            exit 0
+          fi
           git commit -m "deploy-ui: update index.html from main@${GITHUB_SHA::7}"
           git push origin HEAD:gh-pages
