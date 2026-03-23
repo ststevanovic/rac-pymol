@@ -1,0 +1,12 @@
+<!-- ── confirm-overlay.html · dispatch confirmation dialog ──── -->
+<div id="confirm-overlay">
+  <div id="confirm-box">
+    <h2>Confirm Render</h2>
+    <p>This will dispatch a GitHub Actions workflow. Please review the parameters:</p>
+    <div class="confirm-params" id="confirm-params-text"></div>
+    <div class="confirm-actions">
+      <button class="btn-cancel" onclick="closeConfirm()">Cancel</button>
+      <button class="btn-go"     onclick="executeRender()">Run</button>
+    </div>
+  </div>
+</div>
