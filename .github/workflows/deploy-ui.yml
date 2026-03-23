@@ -27,10 +27,8 @@ jobs:
           git worktree add /tmp/ghpages origin/gh-pages
 
           cp .github/index.html /tmp/ghpages/index.html
+          rm -rf /tmp/ghpages/doc
           cp -r .github/doc /tmp/ghpages/doc
-
-          # inject PAT into the deployed copy only — never touches source on main
-          RAC_PAT="${{ secrets.PAT_UI }}" python3 .github/scripts/inject_pat.py /tmp/ghpages/doc/app.js
 
           cd /tmp/ghpages
           git add index.html doc/
