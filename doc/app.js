@@ -27,8 +27,8 @@ if (location.hostname !== "127.0.0.1" && location.hostname !== "localhost") {
 
 let _runId      = null;
 let _htmlArtUrl = null;
-let _zipArtUrl  = null;
 let _pollTimer  = null;
+let _stepTimer  = null;  // polls /jobs for step-level progress
 
 // ── mode toggle (--local / --ghaction) ────────────────────────
 let _mode = "ghaction";
@@ -83,15 +83,13 @@ function setStatus(txt) {
 }
 
 // ── enable output buttons ─────────────────────────────────────
-function enableButtons(htmlUrl, zipUrl) {
+function enableButtons(htmlUrl) {
   _htmlArtUrl = htmlUrl;
-  _zipArtUrl  = zipUrl;
   const actions = document.getElementById("cbe-actions");
   actions.style.display = "flex";
   document.getElementById("btn-html-view").disabled = false;
-  document.getElementById("btn-download").disabled  = zipUrl ? false : true;
   log("Output ready — HTML View enabled.", "ok");
-  cbeWrite("Output ready.", "prompt");
+  cbeWrite("✔  slides ready — click HTML View", "prompt");
 }
 
 // ── confirm overlay ───────────────────────────────────────────
@@ -192,7 +190,7 @@ async function executeLocal() {
         setStatus("done");
         cbeWrite(`✔  Done — click HTML View to open slides`, "prompt");
         log("Batch complete — HTML View ready.", "ok");
-        enableButtons(s.slides, null);
+        enableButtons(s.slides);
         document.getElementById("cta").disabled = false;
       }
     } catch (_) {}
@@ -204,6 +202,14 @@ async function executeLocal() {
 async function executeGHAction() {
   const sceno = document.getElementById("f-scenography").value.trim();
   const scene = document.getElementById("f-scene-id").value.trim();
+
+  // reset state from any previous run
+  _runId = null;
+  _htmlArtUrl = null;
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  if (_stepTimer) { clearInterval(_stepTimer); _stepTimer = null; }
+  document.getElementById("cbe-actions").style.display = "none";
+  document.getElementById("btn-html-view").disabled = true;
 
   document.getElementById("cta").disabled = true;
   setStatus("dispatching…");
@@ -252,18 +258,50 @@ async function executeGHAction() {
   }
 }
 
-// ── poll for run ID + completion ──────────────────────────────
+// ── poll for run ID + completion, with step-level progress ────
 async function pollForRunId(token, scene, dispatchedAt) {
-  const runsUrl = `https://api.github.com/repos/${REPO}/actions/runs?per_page=10`;
+  const runsUrl = `https://api.github.com/repos/${REPO}/actions/runs?per_page=15&event=workflow_dispatch`;
   let attempts = 0;
-  const MAX_ATTEMPTS = 60;           // 60 × 3s = 3 min ceiling
+  const MAX_ATTEMPTS = 60;  // 60 × 3s = 3 min ceiling
+  // Track step statuses so we only print transitions, not duplicates
+  const _stepSeen = {};
+
+  // ── inner: poll /jobs for step-level progress ───────────────
+  function startStepPolling(runId) {
+    if (_stepTimer) clearInterval(_stepTimer);
+    _stepTimer = setInterval(async () => {
+      try {
+        const jr = await fetch(
+          `https://api.github.com/repos/${REPO}/actions/runs/${runId}/jobs`,
+          { headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" } }
+        );
+        if (!jr.ok) return;
+        const jdata = await jr.json();
+        for (const job of (jdata.jobs || [])) {
+          for (const step of (job.steps || [])) {
+            const key = `${job.id}-${step.number}`;
+            const val = `${step.status}:${step.conclusion}`;
+            if (_stepSeen[key] === val) continue;
+            _stepSeen[key] = val;
+            if (step.status === "in_progress") {
+              cbeWrite(`  ▶  ${step.name}`);
+            } else if (step.status === "completed") {
+              const icon = step.conclusion === "success" ? "✔" : "✘";
+              cbeWrite(`  ${icon}  ${step.name}`);
+            }
+          }
+        }
+      } catch (_) {}
+    }, 4000);
+  }
 
   _pollTimer = setInterval(async () => {
     attempts++;
     if (attempts > MAX_ATTEMPTS) {
       clearInterval(_pollTimer);
+      if (_stepTimer) clearInterval(_stepTimer);
       log("Polling timed out after 3 min.", "err");
-      cbeWrite("✘  Timed out — check https://github.com/" + REPO + "/actions", "prompt");
+      cbeWrite("✘  Timed out — https://github.com/" + REPO + "/actions", "prompt");
       setStatus("timeout");
       document.getElementById("cta").disabled = false;
       return;
@@ -273,48 +311,42 @@ async function pollForRunId(token, scene, dispatchedAt) {
       const r = await fetch(runsUrl, {
         headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
       });
-      if (!r.ok) {
-        cbeWrite(`  poll ${attempts}: HTTP ${r.status}`, "");
-        return;
-      }
+      if (!r.ok) { cbeWrite(`  poll ${attempts}: HTTP ${r.status}`); return; }
       const data = await r.json();
 
-      // Match ANY workflow_dispatch run created after we dispatched.
-      // Use 60s buffer — GH created_at lags behind real wall-clock.
+      // Filter by workflow file name AND event, with 60s clock-skew buffer
       const cutoff = new Date(new Date(dispatchedAt).getTime() - 60000);
       const run = (data.workflow_runs || []).find(
-        w => w.event === "workflow_dispatch" && new Date(w.created_at) >= cutoff
+        w => w.event === "workflow_dispatch"
+          && (w.path || "").includes("ui.yml")
+          && new Date(w.created_at) >= cutoff
       );
 
       if (!run) {
-        if (attempts % 5 === 0) cbeWrite(`  poll ${attempts}/${MAX_ATTEMPTS}: waiting for run…`);
+        if (attempts % 4 === 0) cbeWrite(`  waiting for run… (${attempts}/${MAX_ATTEMPTS})`);
         return;
       }
 
       if (!_runId) {
         _runId = run.id;
         log(`Run #${_runId} — ${run.status}`, "info");
-        cbeWrite(`Run ID : ${_runId}`);
-        cbeWrite(`Status : ${run.status}`);
-        cbeWrite(`Logs   : https://github.com/${REPO}/actions/runs/${_runId}`);
-      } else {
-        // Update status on each tick so the user sees progress
-        if (attempts % 3 === 0) cbeWrite(`  poll ${attempts}: ${run.status}…`);
+        cbeWrite(`\nRun #${_runId}  ${run.status}`);
+        cbeWrite(`Logs → https://github.com/${REPO}/actions/runs/${_runId}`);
+        startStepPolling(_runId);
       }
 
       if (run.status !== "completed") return;
 
       clearInterval(_pollTimer);
+      clearInterval(_stepTimer);
       const conclusion = run.conclusion;
       log(`Run #${_runId} → ${conclusion}`, conclusion === "success" ? "ok" : "err");
       setStatus(conclusion);
       cbeWrite(`\n── ${conclusion.toUpperCase()} ──`);
 
       if (conclusion === "success") {
-        // gh-pages deploy takes a few seconds after the run completes.
-        // Wait before reading index.json.
         cbeWrite("Waiting for gh-pages deploy…");
-        await new Promise(r => setTimeout(r, 8000));
+        await new Promise(res => setTimeout(res, 8000));
         await fetchArtifacts(token);
       }
 
@@ -348,7 +380,7 @@ async function fetchArtifacts(token) {
       const slidesUrl = `https://${REPO.split("/")[0]}.github.io/${REPO.split("/")[1]}/${tag}/slides.html`;
       log(`Slides → ${slidesUrl}`, "ok");
       cbeWrite(`\n✔  slides: ${slidesUrl}`, "prompt");
-      enableButtons(slidesUrl, null);
+      enableButtons(slidesUrl);
       return;
     } catch (e) {
       cbeWrite(`  index.json attempt ${retry + 1}: ${e.message}`);
@@ -360,4 +392,3 @@ async function fetchArtifacts(token) {
 
 // ── artifact actions ──────────────────────────────────────────
 function openHtmlView() { if (_htmlArtUrl) window.open(_htmlArtUrl, "_blank"); }
-function downloadZip()  { if (_zipArtUrl)  window.open(_zipArtUrl,  "_blank"); }
