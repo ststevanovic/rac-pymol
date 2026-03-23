@@ -30,7 +30,7 @@ jobs:
           cp -r .github/doc /tmp/ghpages/doc
 
           # inject PAT into the deployed copy only — never touches source on main
-          sed -i "s|__PAT_UI__|${{ secrets.PAT_UI }}|g" /tmp/ghpages/doc/app.js
+          RAC_PAT="${{ secrets.PAT_UI }}" python3 .github/scripts/inject_pat.py /tmp/ghpages/doc/app.js
 
           cd /tmp/ghpages
           git add index.html doc/
