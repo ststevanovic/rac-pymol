@@ -46,7 +46,11 @@ echo "[remote] run_dir : ${RUN_DIR}"
 export BATCH_N_SUBJECTS="${BATCH_N_SUBJECTS:-2}"
 # RAC_LOCAL_UI not set — no status HTTP server needed on CI
 
-conda run -n pymol-ci python pymol-workshop/batch.py "$SCENE_ID"
+PYTHON="${REPO_ROOT}/.venv-batch/bin/python"
+"$PYTHON" pymol-workshop/batch.py "$SCENE_ID"
+
+# write tag for workflow GITHUB_OUTPUT
+echo "$BATCH_RUN_TAG" > "${REPO_ROOT}/.rendering/.last_tag"
 
 SLIDES="${RUN_DIR}/slides.html"
 if [[ ! -f "$SLIDES" ]]; then

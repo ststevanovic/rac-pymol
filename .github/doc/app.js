@@ -18,6 +18,11 @@ const GH_API      = `https://api.github.com/repos/${REPO}/actions/workflows/${WO
     sessionStorage.setItem("gh_pat", pat);
     history.replaceState(null, "", location.pathname + location.search);
   }
+  // show clear-token button if a token is already stored
+  if (sessionStorage.getItem("gh_pat")) {
+    const btn = document.getElementById("btn-clear-pat");
+    if (btn) btn.style.display = "inline-block";
+  }
 })();
 
 // Hide --local toggle when not running on localhost
@@ -27,8 +32,9 @@ if (location.hostname !== "127.0.0.1" && location.hostname !== "localhost") {
 
 let _runId      = null;
 let _htmlArtUrl = null;
-let _zipArtUrl  = null;
 let _pollTimer  = null;
+let _stepTimer  = null;  // polls /jobs for step-level progress
+let _pendingGHAction = null;
 
 // ── mode toggle (--local / --ghaction) ────────────────────────
 let _mode = "ghaction";
@@ -82,16 +88,21 @@ function setStatus(txt) {
   if (s) s.textContent = txt;
 }
 
+function clearPat() {
+  sessionStorage.removeItem("gh_pat");
+  const btn = document.getElementById("btn-clear-pat");
+  if (btn) btn.style.display = "none";
+  log("Token cleared — will prompt on next Render.", "info");
+}
+
 // ── enable output buttons ─────────────────────────────────────
-function enableButtons(htmlUrl, zipUrl) {
+function enableButtons(htmlUrl) {
   _htmlArtUrl = htmlUrl;
-  _zipArtUrl  = zipUrl;
   const actions = document.getElementById("cbe-actions");
   actions.style.display = "flex";
   document.getElementById("btn-html-view").disabled = false;
-  document.getElementById("btn-download").disabled  = zipUrl ? false : true;
   log("Output ready — HTML View enabled.", "ok");
-  cbeWrite("Output ready.", "prompt");
+  cbeWrite("✔  slides ready — click HTML View", "prompt");
 }
 
 // ── confirm overlay ───────────────────────────────────────────
@@ -131,7 +142,6 @@ let _localLogTimer  = null;
 async function executeLocal() {
   const scene = document.getElementById("f-scene-id").value.trim();
   document.getElementById("cbe-actions").style.display = "none";
-  document.getElementById("btn-download").style.display = "none";
   document.getElementById("cbe-wait").style.display = "none";
   document.getElementById("cta").disabled = true;
   setStatus("starting…");
@@ -192,7 +202,7 @@ async function executeLocal() {
         setStatus("done");
         cbeWrite(`✔  Done — click HTML View to open slides`, "prompt");
         log("Batch complete — HTML View ready.", "ok");
-        enableButtons(s.slides, null);
+        enableButtons(s.slides);
         document.getElementById("cta").disabled = false;
       }
     } catch (_) {}
@@ -205,20 +215,32 @@ async function executeGHAction() {
   const sceno = document.getElementById("f-scenography").value.trim();
   const scene = document.getElementById("f-scene-id").value.trim();
 
+  // reset state from any previous run
+  _runId = null;
+  _htmlArtUrl = null;
+  if (_pollTimer) { clearInterval(_pollTimer); _pollTimer = null; }
+  if (_stepTimer) { clearInterval(_stepTimer); _stepTimer = null; }
+  document.getElementById("cbe-actions").style.display = "none";
+  document.getElementById("btn-html-view").disabled = true;
+
   document.getElementById("cta").disabled = true;
   setStatus("dispatching…");
   log("Dispatching workflow…", "info");
   cbeWrite(`$ github-actions dispatch  scene=${scene}  sceno=${sceno || "default"}`, "prompt");
 
-  const token = sessionStorage.getItem("gh_pat") ||
-    prompt("GitHub PAT (workflow:write scope) — stored in sessionStorage only:");
-  if (token) sessionStorage.setItem("gh_pat", token);
-  if (!token) {
-    log("Cancelled — no PAT provided.", "err");
-    document.getElementById("cta").disabled = false;
+  const stored = sessionStorage.getItem("gh_pat");
+  if (!stored) {
+    // show password overlay; it will call _resumeGHAction(token) on submit
+    _pendingGHAction = { sceno, scene };
+    showPatOverlay();
     return;
   }
+  const token = stored;
 
+  _dispatchWithToken(token, sceno, scene);
+}
+
+async function _dispatchWithToken(token, sceno, scene) {
   try {
     const resp = await fetch(GH_API, {
       method: "POST",
@@ -234,10 +256,23 @@ async function executeGHAction() {
     });
 
     if (resp.status === 204) {
+      // show clear-token button now that we know the token works
+      const btn = document.getElementById("btn-clear-pat");
+      if (btn) btn.style.display = "inline-block";
       log("Workflow dispatched successfully.", "ok");
       setStatus("running");
       cbeWrite("Workflow queued. Polling for run ID…");
-      pollForRunId(token, scene);
+      const dispatchedAt = new Date().toISOString();
+      pollForRunId(token, scene, dispatchedAt);
+    } else if (resp.status === 401 || resp.status === 403) {
+      // bad token — clear it and re-prompt
+      sessionStorage.removeItem("gh_pat");
+      const btn = document.getElementById("btn-clear-pat");
+      if (btn) btn.style.display = "none";
+      log(`Auth failed (${resp.status}) — re-enter token.`, "err");
+      cbeWrite(`✘  Auth ${resp.status} — token invalid or expired.`);
+      _pendingGHAction = { sceno, scene };
+      showPatOverlay();
     } else {
       const body = await resp.text();
       log(`Dispatch failed: HTTP ${resp.status}`, "err");
@@ -251,62 +286,170 @@ async function executeGHAction() {
   }
 }
 
-// ── poll for run ID + completion ──────────────────────────────
-async function pollForRunId(token, scene) {
-  const runsUrl = `https://api.github.com/repos/${REPO}/actions/runs?per_page=5`;
+// ── poll for run ID + completion, with step-level progress ────
+async function pollForRunId(token, scene, dispatchedAt) {
+  const runsUrl = `https://api.github.com/repos/${REPO}/actions/runs?per_page=15&event=workflow_dispatch`;
   let attempts = 0;
+  const MAX_ATTEMPTS = 60;  // 60 × 3s = 3 min ceiling
+  // Track step statuses so we only print transitions, not duplicates
+  const _stepSeen = {};
+
+  // ── inner: poll /jobs for step-level progress ───────────────
+  function startStepPolling(runId) {
+    if (_stepTimer) clearInterval(_stepTimer);
+    _stepTimer = setInterval(async () => {
+      try {
+        const jr = await fetch(
+          `https://api.github.com/repos/${REPO}/actions/runs/${runId}/jobs`,
+          { headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" } }
+        );
+        if (!jr.ok) return;
+        const jdata = await jr.json();
+        for (const job of (jdata.jobs || [])) {
+          for (const step of (job.steps || [])) {
+            const key = `${job.id}-${step.number}`;
+            const val = `${step.status}:${step.conclusion}`;
+            if (_stepSeen[key] === val) continue;
+            _stepSeen[key] = val;
+            if (step.status === "in_progress") {
+              cbeWrite(`  ▶  ${step.name}`);
+            } else if (step.status === "completed") {
+              const icon = step.conclusion === "success" ? "✔" : "✘";
+              cbeWrite(`  ${icon}  ${step.name}`);
+            }
+          }
+        }
+      } catch (_) {}
+    }, 4000);
+  }
 
   _pollTimer = setInterval(async () => {
     attempts++;
+    if (attempts > MAX_ATTEMPTS) {
+      clearInterval(_pollTimer);
+      if (_stepTimer) clearInterval(_stepTimer);
+      log("Polling timed out after 3 min.", "err");
+      cbeWrite("✘  Timed out — https://github.com/" + REPO + "/actions", "prompt");
+      setStatus("timeout");
+      document.getElementById("cta").disabled = false;
+      return;
+    }
+
     try {
       const r = await fetch(runsUrl, {
         headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
       });
+      if (!r.ok) { cbeWrite(`  poll ${attempts}: HTTP ${r.status}`); return; }
       const data = await r.json();
+
+      // Filter by workflow file name AND event, with 60s clock-skew buffer
+      const cutoff = new Date(new Date(dispatchedAt).getTime() - 60000);
       const run = (data.workflow_runs || []).find(
-        w => w.name === "ui Render" && w.status !== "completed" || w.status === "completed"
+        w => w.event === "workflow_dispatch"
+          && (w.path || "").includes("ui.yml")
+          && new Date(w.created_at) >= cutoff
       );
-      if (run && !_runId) {
+
+      if (!run) {
+        if (attempts % 4 === 0) cbeWrite(`  waiting for run… (${attempts}/${MAX_ATTEMPTS})`);
+        return;
+      }
+
+      if (!_runId) {
         _runId = run.id;
-        log(`Run #${_runId} started — status: ${run.status}`, "info");
-        cbeWrite(`Run ID: ${_runId}  status: ${run.status}`);
-        cbeWrite(`Logs  : https://github.com/${REPO}/actions/runs/${_runId}`);
+        log(`Run #${_runId} — ${run.status}`, "info");
+        cbeWrite(`\nRun #${_runId}  ${run.status}`);
+        cbeWrite(`Logs → https://github.com/${REPO}/actions/runs/${_runId}`);
+        startStepPolling(_runId);
       }
-      if (run && run.status === "completed") {
-        clearInterval(_pollTimer);
-        const conclusion = run.conclusion;
-        log(`Run #${_runId} ${conclusion}.`, conclusion === "success" ? "ok" : "err");
-        setStatus(conclusion);
-        cbeWrite(`\n── Job ${conclusion.toUpperCase()} ──`);
-        if (conclusion === "success") fetchArtifacts(token);
-        document.getElementById("cta").disabled = false;
+
+      if (run.status !== "completed") return;
+
+      clearInterval(_pollTimer);
+      clearInterval(_stepTimer);
+      const conclusion = run.conclusion;
+      log(`Run #${_runId} → ${conclusion}`, conclusion === "success" ? "ok" : "err");
+      setStatus(conclusion);
+      cbeWrite(`\n── ${conclusion.toUpperCase()} ──`);
+
+      if (conclusion === "success") {
+        cbeWrite("Waiting for gh-pages deploy…");
+        await new Promise(res => setTimeout(res, 8000));
+        await fetchArtifacts(token);
       }
-      if (attempts > 60) {
-        clearInterval(_pollTimer);
-        log("Polling timed out after 5 min.", "err");
-        document.getElementById("cta").disabled = false;
-      }
-    } catch (e) { /* network hiccup — keep polling */ }
-  }, 5000);
+
+      document.getElementById("cta").disabled = false;
+    } catch (e) {
+      cbeWrite(`  poll ${attempts}: ${e.message}`, "err");
+    }
+  }, 3000);
 }
 
 // ── resolve slides URL from gh-pages/index.json ───────────────
-async function fetchArtifacts(_token) {
-  const indexUrl = `https://raw.githubusercontent.com/${REPO}/gh-pages/index.json?_=${Date.now()}`;
-  try {
-    const r = await fetch(indexUrl, { cache: "no-store" });
-    if (!r.ok) { log("index.json not found on gh-pages yet.", "err"); return; }
-    const data = await r.json();
-    const tag  = data.latest;
-    if (!tag) { log("index.json has no 'latest' field.", "err"); return; }
-    const slidesUrl = `https://${REPO.split("/")[0]}.github.io/${REPO.split("/")[1]}/${tag}/slides.html`;
-    log(`Slides → ${slidesUrl}`, "ok");
-    cbeWrite(`slides: ${slidesUrl}`, "prompt");
-    setTagLabel(tag);
-    enableButtons(slidesUrl, null);
-  } catch (e) { log(`index.json fetch failed: ${e.message}`, "err"); }
+async function fetchArtifacts(token) {
+  // Retry up to 4 times — gh-pages content API can be stale
+  for (let retry = 0; retry < 4; retry++) {
+    try {
+      const indexUrl = `https://api.github.com/repos/${REPO}/contents/index.json?ref=gh-pages&_=${Date.now()}`;
+      const r = await fetch(indexUrl, {
+        cache: "no-store",
+        headers: { "Authorization": `Bearer ${token}`, "Accept": "application/vnd.github+json" }
+      });
+      if (!r.ok) {
+        cbeWrite(`  index.json attempt ${retry + 1}: HTTP ${r.status}`);
+        await new Promise(r => setTimeout(r, 5000));
+        continue;
+      }
+      const envelope = await r.json();
+      const data = JSON.parse(atob(envelope.content.replace(/\n/g, "")));
+      const tag  = data.latest;
+      if (!tag) { log("index.json has no 'latest' field.", "err"); return; }
+
+      const slidesUrl = `https://${REPO.split("/")[0]}.github.io/${REPO.split("/")[1]}/${tag}/slides.html`;
+      log(`Slides → ${slidesUrl}`, "ok");
+      cbeWrite(`\n✔  slides: ${slidesUrl}`, "prompt");
+      enableButtons(slidesUrl);
+      return;
+    } catch (e) {
+      cbeWrite(`  index.json attempt ${retry + 1}: ${e.message}`);
+      await new Promise(r => setTimeout(r, 5000));
+    }
+  }
+  log("Could not read index.json after 4 retries.", "err");
 }
 
 // ── artifact actions ──────────────────────────────────────────
 function openHtmlView() { if (_htmlArtUrl) window.open(_htmlArtUrl, "_blank"); }
-function downloadZip()  { if (_zipArtUrl)  window.open(_zipArtUrl,  "_blank"); }
+
+// ── PAT overlay ───────────────────────────────────────────────
+function showPatOverlay() {
+  document.getElementById("pat-input").value = "";
+  document.getElementById("pat-overlay").classList.add("show");
+  setTimeout(() => document.getElementById("pat-input").focus(), 60);
+}
+
+function cancelPat() {
+  document.getElementById("pat-overlay").classList.remove("show");
+  _pendingGHAction = null;
+  document.getElementById("cta").disabled = false;
+  log("Cancelled — no PAT provided.", "err");
+  setStatus("idle");
+}
+
+function submitPat() {
+  const val = document.getElementById("pat-input").value.trim();
+  if (!val) { document.getElementById("pat-input").focus(); return; }
+  sessionStorage.setItem("gh_pat", val);
+  document.getElementById("pat-overlay").classList.remove("show");
+  document.getElementById("pat-input").value = "";
+  if (_pendingGHAction) {
+    const { sceno, scene } = _pendingGHAction;
+    _pendingGHAction = null;
+    _dispatchWithToken(val, sceno, scene);
+  }
+}
+
+function togglePatEye() {
+  const inp = document.getElementById("pat-input");
+  inp.type = inp.type === "password" ? "text" : "password";
+}

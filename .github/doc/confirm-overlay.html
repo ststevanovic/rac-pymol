@@ -10,3 +10,22 @@
     </div>
   </div>
 </div>
+
+<!-- ── PAT input overlay ─────────────────────────────────────── -->
+<div id="pat-overlay">
+  <div id="pat-box">
+    <h2>GitHub Token</h2>
+    <p>Stored in <code>sessionStorage</code> only — never sent anywhere except the GitHub API.</p>
+    <div class="pat-field">
+      <input type="password" id="pat-input" placeholder="ghp_…"
+             autocomplete="off" spellcheck="false"
+             onkeydown="if(event.key==='Enter')submitPat()">
+      <button class="pat-eye" id="pat-eye" onclick="togglePatEye()"
+              title="Show / hide">&#128065;</button>
+    </div>
+    <div class="confirm-actions" style="margin-top:14px">
+      <button class="btn-cancel" onclick="cancelPat()">Cancel</button>
+      <button class="btn-go"     onclick="submitPat()">Continue</button>
+    </div>
+  </div>
+</div>

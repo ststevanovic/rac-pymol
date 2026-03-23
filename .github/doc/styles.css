@@ -200,6 +200,52 @@ input[type=text]::placeholder { color: var(--border); }
 .cbe-btn-icon:hover { background: var(--hi); color: #fff; }
 .cbe-btn-icon:disabled { opacity: 0.3; cursor: not-allowed; }
 
+/* ── PAT overlay ────────────────────────────────────────── */
+#pat-overlay {
+  display: none; position: fixed; inset: 0;
+  background: rgba(28,5,36,0.55); backdrop-filter: blur(4px);
+  z-index: 101; align-items: center; justify-content: center;
+}
+#pat-overlay.show { display: flex; }
+#pat-box {
+  background: #fff; border: 2px solid var(--hi);
+  border-radius: 12px; padding: 26px 30px; max-width: 360px; width: 90%;
+  box-shadow: 0 12px 48px rgba(171,0,97,0.2);
+}
+#pat-box h2 {
+  font-size: 16px; font-weight: 800; color: var(--hi);
+  margin-bottom: 8px; letter-spacing: -0.02em;
+  font-family: 'Inter', sans-serif;
+}
+#pat-box p {
+  font-size: 12px; color: var(--mute); margin-bottom: 14px; line-height: 1.6;
+}
+#pat-box code {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px;
+  background: var(--surf); padding: 1px 5px; border-radius: 3px;
+}
+.pat-field {
+  display: flex; align-items: center; gap: 6px;
+}
+.pat-field input[type=password],
+.pat-field input[type=text] {
+  flex: 1; padding: 9px 12px;
+  border: 1.5px solid var(--border); border-radius: 7px;
+  background: var(--surf); color: var(--fg);
+  font-size: 13px; font-family: 'JetBrains Mono', monospace;
+  outline: none; transition: border-color 0.18s, box-shadow 0.18s;
+}
+.pat-field input:focus {
+  border-color: var(--hi); box-shadow: 0 0 0 3px rgba(171,0,97,0.1);
+}
+.pat-eye {
+  background: none; border: 1.5px solid var(--border); border-radius: 6px;
+  padding: 6px 8px; cursor: pointer; font-size: 14px; line-height: 1;
+  color: var(--mute); transition: border-color 0.15s;
+  flex-shrink: 0;
+}
+.pat-eye:hover { border-color: var(--hi); color: var(--hi); }
+
 /* ── confirm overlay ─────────────────────────────────────── */
 #confirm-overlay {
   display: none; position: fixed; inset: 0;

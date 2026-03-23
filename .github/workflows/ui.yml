@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       scenography:
-        description: "Scenography URL or path (e.g. https://… or local/<name>.db)"
+        description: "Scenography URL or path"
         required: false
         default: ""
       scene_id:
@@ -12,19 +12,9 @@ on:
         required: true
         default: "9ax6"
 
-# Trigger: manual dispatch from the landing page CTA-button ("Render")
-# This is the workflow wired to the ui.yml CTA.
-# For the full render pipeline see ../workflows/render.yml
-
-# Only one render at a time — queued dispatches wait; a second concurrent
-# trigger cancels the in-progress run rather than stacking unbounded jobs.
 concurrency:
   group: ui-render
   cancel-in-progress: true
-
-defaults:
-  run:
-    working-directory: rac_pymol
 
 jobs:
   render:
@@ -34,46 +24,45 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Conda (miniforge)
-        uses: conda-incubator/setup-miniconda@v3
+      - uses: actions/setup-python@v5
         with:
-          miniforge-variant: Mambaforge
-          python-version: "3.11"
-          activate-environment: pymol-ci
+          python-version: "3.10"
+          cache: pip
 
-      - name: Install PyMOL open-source + project deps + plotly
-        shell: bash -el {0}
-        run: |
-          mamba install -y -c conda-forge pymol-open-source
-          pip install -e ".[dev]"
-          pip install plotly
-
-      - name: Install headless display libs
+      - name: Install system libs (headless GL + Xvfb)
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends \
-            libgl1-mesa-dri libgl1-mesa-glx libosmesa6 xvfb zip
+            libgl1 libglu1-mesa libosmesa6 xvfb zip
 
-      - name: Resolve scenography DB (curl-wrapper)
-        shell: bash -el {0}
+      - name: Create venv + install deps
+        run: |
+          python -m venv .venv-batch
+          .venv-batch/bin/pip install --upgrade pip
+          .venv-batch/bin/pip install -e ".[dev]"
+
+      - name: Start Xvfb
+        run: |
+          Xvfb :99 -screen 0 1280x1024x24 &
+          sleep 2
+        env:
+          DISPLAY: ":99"
+
+      - name: Resolve scenography DB
+        run: bash .github/scripts/curl_wrapper.sh "${SCENOGRAPHY_INPUT}"
         env:
           SCENOGRAPHY_INPUT: ${{ github.event.inputs.scenography }}
-        run: bash .github/scripts/curl_wrapper.sh "${SCENOGRAPHY_INPUT}"
 
       - name: Prepare enzyme reference scene (custom scenography only)
         if: ${{ github.event.inputs.scenography != '' }}
-        shell: bash -el {0}
+        run: .venv-batch/bin/python pymol-workshop/enzyme.py
         env:
           DISPLAY: ":99"
           LIBGL_ALWAYS_SOFTWARE: "1"
           MESA_GL_VERSION_OVERRIDE: "3.3"
-        run: |
-          Xvfb :99 -screen 0 1280x1024x24 &
-          sleep 2
-          conda run -n pymol-ci python pymol-workshop/enzyme.py
 
-      - name: "MAIN: run batch + push to gh-pages"
-        shell: bash -el {0}
+      - name: Run batch + push to gh-pages
+        id: batch
         env:
           DISPLAY: ":99"
           LIBGL_ALWAYS_SOFTWARE: "1"
@@ -82,21 +71,40 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
-          Xvfb :99 -screen 0 1280x1024x24 &
-          sleep 2
           bash .github/scripts/remote.sh "${{ github.event.inputs.scene_id }}" 2>&1 | tee .rendering/run.log
+          echo "run_tag=$(cat .rendering/.last_tag)" >> $GITHUB_OUTPUT
+
+      - name: Signal slides ready
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG=${{ steps.batch.outputs.run_tag }}
+          DEP_ID=$(gh api repos/${{ github.repository }}/deployments \
+            --method POST \
+            -f ref=gh-pages \
+            -f environment=render-output \
+            -f description="${TAG}" \
+            -f auto_merge=false \
+            --jq '.id')
+          gh api repos/${{ github.repository }}/deployments/${DEP_ID}/statuses \
+            --method POST \
+            -f state=success \
+            -f environment_url="https://${{ github.repository_owner }}.github.io/rac-pymol/${TAG}/slides.html" \
+            -f description="${TAG}"
 
       - name: Upload terminal log
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: run-log
-          path: rac_pymol/.rendering/run.log
+          path: .rendering/run.log
           retention-days: 14
 
-      - name: Upload full render artefacts on failure
+      - name: Upload render artefacts on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: render-artefacts-failure
-          path: rac_pymol/.rendering/
+          path: .rendering/
           retention-days: 7
