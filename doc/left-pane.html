@@ -1,0 +1,106 @@
+<!-- ── left-pane.html · scene form + isometric icon ─────────── -->
+<div id="left">
+  <div id="form-card">
+
+    <!-- isometric cube icon (molecular nodes) -->
+    <svg id="scene-icon" viewBox="0 0 300 140" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <filter id="cshadow" x="-20%" y="-20%" width="160%" height="160%">
+          <feDropShadow dx="2" dy="3" stdDeviation="4" flood-color="#1c0524" flood-opacity="0.18"/>
+        </filter>
+        <clipPath id="clp-top">  <polygon points="182,32 227,8  272,32 227,56"/></clipPath>
+        <clipPath id="clp-left"> <polygon points="182,32 227,56 227,104 182,80"/></clipPath>
+        <clipPath id="clp-right"><polygon points="272,32 227,56 227,104 272,80"/></clipPath>
+      </defs>
+
+      <!-- JSON card -->
+      <rect x="8" y="20" width="90" height="100" rx="6"
+            fill="#ffffff" filter="url(#cshadow)" stroke="#b078a8" stroke-width="1.2"/>
+      <rect x="8"  y="20" width="90" height="15" rx="6" fill="#f5edf7"/>
+      <rect x="8"  y="29" width="90" height="6"  fill="#f5edf7"/>
+      <circle cx="19" cy="27" r="2.8" fill="#AB0061" opacity="0.75"/>
+      <circle cx="27" cy="27" r="2.8" fill="#b078a8" opacity="0.55"/>
+      <circle cx="35" cy="27" r="2.8" fill="#b078a8" opacity="0.4"/>
+      <rect x="16" y="43" width="16" height="4" rx="2" fill="#AB0061" opacity="0.60"/>
+      <rect x="36" y="43" width="36" height="4" rx="2" fill="#1c0524" opacity="0.15"/>
+      <rect x="16" y="53" width="20" height="4" rx="2" fill="#b078a8" opacity="0.50"/>
+      <rect x="40" y="53" width="30" height="4" rx="2" fill="#1c0524" opacity="0.13"/>
+      <rect x="16" y="63" width="12" height="4" rx="2" fill="#AB0061" opacity="0.45"/>
+      <rect x="32" y="63" width="46" height="4" rx="2" fill="#1c0524" opacity="0.11"/>
+      <rect x="16" y="73" width="22" height="4" rx="2" fill="#b078a8" opacity="0.42"/>
+      <rect x="42" y="73" width="28" height="4" rx="2" fill="#1c0524" opacity="0.10"/>
+      <rect x="16" y="83" width="10" height="4" rx="2" fill="#AB0061" opacity="0.35"/>
+      <rect x="30" y="83" width="50" height="4" rx="2" fill="#1c0524" opacity="0.09"/>
+      <rect x="16" y="93" width="18" height="4" rx="2" fill="#b078a8" opacity="0.30"/>
+      <rect x="38" y="93" width="40" height="4" rx="2" fill="#1c0524" opacity="0.08"/>
+
+      <!-- arrow card → cube -->
+      <rect x="98" y="62" width="64" height="16" fill="#AB0061" opacity="0.82"/>
+      <polygon points="162,50 162,90 184,70" fill="#AB0061" opacity="0.82"/>
+
+      <!-- isometric cube (edge 45, apex T=(227,8)) -->
+      <polygon points="182,32 227,8  272,32 227,56"
+               fill="#ede0f4" opacity="0.85" stroke="#AB0061" stroke-width="1.5"/>
+      <polygon points="182,32 227,56 227,104 182,80"
+               fill="#f5edf7" opacity="0.60" stroke="#b078a8" stroke-width="1.2"/>
+      <polygon points="272,32 227,56 227,104 272,80"
+               fill="#f5edf7" opacity="0.40" stroke="#b078a8" stroke-width="1.2"/>
+
+      <!-- molecular nodes clipped to cube faces -->
+      <g clip-path="url(#clp-top)" opacity="0.70">
+        <circle cx="207" cy="28" r="3" fill="#AB0061"/>
+        <circle cx="227" cy="42" r="3" fill="#b078a8"/>
+        <circle cx="248" cy="24" r="3" fill="#AB0061"/>
+        <line x1="207" y1="28" x2="227" y2="42" stroke="#b078a8" stroke-width="1"/>
+        <line x1="227" y1="42" x2="248" y2="24" stroke="#AB0061" stroke-width="1"/>
+      </g>
+      <g clip-path="url(#clp-left)" opacity="0.65">
+        <circle cx="196" cy="60" r="3" fill="#AB0061"/>
+        <circle cx="210" cy="80" r="3" fill="#b078a8"/>
+        <circle cx="200" cy="92" r="3" fill="#AB0061"/>
+        <line x1="196" y1="60" x2="210" y2="80" stroke="#b078a8" stroke-width="1"/>
+        <line x1="210" y1="80" x2="200" y2="92" stroke="#AB0061" stroke-width="0.9"/>
+      </g>
+      <g clip-path="url(#clp-right)" opacity="0.55">
+        <circle cx="248" cy="60" r="3" fill="#b078a8"/>
+        <circle cx="258" cy="80" r="3" fill="#AB0061"/>
+        <line x1="248" y1="60" x2="258" y2="80" stroke="#b078a8" stroke-width="1"/>
+      </g>
+
+      <!-- cube vertex dots -->
+      <circle cx="227" cy="8"   r="3.5" fill="#AB0061" opacity="0.9"/>
+      <circle cx="182" cy="32"  r="3.5" fill="#AB0061" opacity="0.85"/>
+      <circle cx="272" cy="32"  r="3"   fill="#b078a8" opacity="0.8"/>
+      <circle cx="227" cy="56"  r="3"   fill="#b078a8" opacity="0.75"/>
+      <circle cx="182" cy="80"  r="3.5" fill="#b078a8" opacity="0.8"/>
+      <circle cx="272" cy="80"  r="3"   fill="#b078a8" opacity="0.7"/>
+      <circle cx="227" cy="104" r="3.5" fill="#AB0061" opacity="0.75"/>
+    </svg>
+
+    <div class="form-heading">
+      <h2>Scene <span>Render</span></h2>
+      <p id="form-subtitle">Dispatch a headless PyMOL render via GitHub Actions.</p>
+    </div>
+
+    <div class="field">
+      <label for="f-scenography">Scenography</label>
+      <input type="text" id="f-scenography" placeholder="default: scenography.db">
+      <div class="field-subtitle">Public URL supported.</div>
+    </div>
+
+    <div class="field">
+      <label for="f-scene-id">Scene ID</label>
+      <input type="text" id="f-scene-id" value="9ax6" placeholder="e.g. 9ax6">
+    </div>
+
+    <button id="cta" onclick="onRenderClick()">Render</button>
+
+    <p id="local-slides-info"
+       style="display:none;font-size:10px;color:var(--mute);font-family:'JetBrains Mono',monospace;
+              line-height:1.6;margin-top:2px;word-break:break-all;">
+      <span style="color:var(--hi);font-weight:700;">slides →</span>
+      <span id="local-slides-path">.rendering/random/…/slides.html</span>
+    </p>
+
+  </div>
+</div>

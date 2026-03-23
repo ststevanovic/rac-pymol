@@ -1,1 +1,54 @@
-GitHub Pages bootstrap
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RAC-PyMOL · Render</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<!-- ── styles extracted to doc/styles.css ── -->
+<link rel="stylesheet" href="doc/styles.css">
+</head>
+<body>
+<div id="app">
+  <!-- fragments injected by bootstrap below -->
+</div>
+
+<script>
+// ── orchestrator: fetch each HTML fragment and inject into #app ───────────
+(async function bootstrap() {
+  const base = "doc/";
+  const app  = document.getElementById("app");
+
+  // 1. header
+  app.insertAdjacentHTML("beforeend", await load(base + "header.html"));
+
+  // 2. body wrapper + left/right panes (parallel fetch)
+  const bodyDiv = document.createElement("div");
+  bodyDiv.id = "body";
+  app.appendChild(bodyDiv);
+  const [leftHTML, rightHTML] = await Promise.all([
+    load(base + "left-pane.html"),
+    load(base + "right-pane.html"),
+  ]);
+  bodyDiv.insertAdjacentHTML("beforeend", leftHTML);
+  bodyDiv.insertAdjacentHTML("beforeend", rightHTML);
+
+  // 3. confirm overlay (outside #app)
+  document.body.insertAdjacentHTML("beforeend", await load(base + "confirm-overlay.html"));
+
+  // 4. app logic — loaded last so DOM is ready
+  const s = document.createElement("script");
+  s.src = base + "app.js";
+  document.body.appendChild(s);
+})();
+
+async function load(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Fragment load failed: ${url} (HTTP ${r.status})`);
+  return r.text();
+}
+</script>
+</body>
+</html>
