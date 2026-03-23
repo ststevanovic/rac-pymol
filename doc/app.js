@@ -266,8 +266,10 @@ async function pollForRunId(token, scene, dispatchedAt) {
       const data = await r.json();
       // Only match 'ui' workflow runs created AFTER we dispatched — avoids stale runs
       // Note: w.name is the workflow-level name: field ("ui"), not the job name
+      // Subtract 15s buffer: GitHub created_at can lag behind browser clock
+      const cutoff = new Date(new Date(dispatchedAt).getTime() - 15000);
       const run = (data.workflow_runs || []).find(
-        w => w.name === "ui" && new Date(w.created_at) >= new Date(dispatchedAt)
+        w => w.name === "ui" && new Date(w.created_at) >= cutoff
       );
       if (!run) return;
       if (!_runId) {
