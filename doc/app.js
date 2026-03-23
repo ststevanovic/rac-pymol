@@ -285,13 +285,13 @@ async function pollForRunId(token, scene, dispatchedAt) {
         if (conclusion === "success") fetchArtifacts(token);
         document.getElementById("cta").disabled = false;
       }
-      if (attempts > 60) {
+      if (attempts > 40) {
         clearInterval(_pollTimer);
-        log("Polling timed out after 5 min.", "err");
+        log("Polling timed out after 2 min.", "err");
         document.getElementById("cta").disabled = false;
       }
     } catch (e) { /* network hiccup — keep polling */ }
-  }, 5000);
+  }, 3000);
 }
 
 // ── resolve slides URL from gh-pages/index.json ───────────────
