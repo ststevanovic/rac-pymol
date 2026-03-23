@@ -29,6 +29,7 @@ let _runId      = null;
 let _htmlArtUrl = null;
 let _pollTimer  = null;
 let _stepTimer  = null;  // polls /jobs for step-level progress
+let _pendingGHAction = null;
 
 // ── mode toggle (--local / --ghaction) ────────────────────────
 let _mode = "ghaction";
@@ -396,3 +397,36 @@ async function fetchArtifacts(token) {
 
 // ── artifact actions ──────────────────────────────────────────
 function openHtmlView() { if (_htmlArtUrl) window.open(_htmlArtUrl, "_blank"); }
+
+// ── PAT overlay ───────────────────────────────────────────────
+function showPatOverlay() {
+  document.getElementById("pat-input").value = "";
+  document.getElementById("pat-overlay").classList.add("show");
+  setTimeout(() => document.getElementById("pat-input").focus(), 60);
+}
+
+function cancelPat() {
+  document.getElementById("pat-overlay").classList.remove("show");
+  _pendingGHAction = null;
+  document.getElementById("cta").disabled = false;
+  log("Cancelled — no PAT provided.", "err");
+  setStatus("idle");
+}
+
+function submitPat() {
+  const val = document.getElementById("pat-input").value.trim();
+  if (!val) { document.getElementById("pat-input").focus(); return; }
+  sessionStorage.setItem("gh_pat", val);
+  document.getElementById("pat-overlay").classList.remove("show");
+  document.getElementById("pat-input").value = "";
+  if (_pendingGHAction) {
+    const { sceno, scene } = _pendingGHAction;
+    _pendingGHAction = null;
+    _dispatchWithToken(val, sceno, scene);
+  }
+}
+
+function togglePatEye() {
+  const inp = document.getElementById("pat-input");
+  inp.type = inp.type === "password" ? "text" : "password";
+}
