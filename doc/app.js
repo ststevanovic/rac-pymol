@@ -18,6 +18,11 @@ const GH_API      = `https://api.github.com/repos/${REPO}/actions/workflows/${WO
     sessionStorage.setItem("gh_pat", pat);
     history.replaceState(null, "", location.pathname + location.search);
   }
+  // show clear-token button if a token is already stored
+  if (sessionStorage.getItem("gh_pat")) {
+    const btn = document.getElementById("btn-clear-pat");
+    if (btn) btn.style.display = "inline-block";
+  }
 })();
 
 // Hide --local toggle when not running on localhost
@@ -83,6 +88,13 @@ function setStatus(txt) {
   if (s) s.textContent = txt;
 }
 
+function clearPat() {
+  sessionStorage.removeItem("gh_pat");
+  const btn = document.getElementById("btn-clear-pat");
+  if (btn) btn.style.display = "none";
+  log("Token cleared — will prompt on next Render.", "info");
+}
+
 // ── enable output buttons ─────────────────────────────────────
 function enableButtons(htmlUrl) {
   _htmlArtUrl = htmlUrl;
@@ -130,7 +142,6 @@ let _localLogTimer  = null;
 async function executeLocal() {
   const scene = document.getElementById("f-scene-id").value.trim();
   document.getElementById("cbe-actions").style.display = "none";
-  document.getElementById("btn-download").style.display = "none";
   document.getElementById("cbe-wait").style.display = "none";
   document.getElementById("cta").disabled = true;
   setStatus("starting…");
@@ -245,11 +256,23 @@ async function _dispatchWithToken(token, sceno, scene) {
     });
 
     if (resp.status === 204) {
+      // show clear-token button now that we know the token works
+      const btn = document.getElementById("btn-clear-pat");
+      if (btn) btn.style.display = "inline-block";
       log("Workflow dispatched successfully.", "ok");
       setStatus("running");
       cbeWrite("Workflow queued. Polling for run ID…");
       const dispatchedAt = new Date().toISOString();
       pollForRunId(token, scene, dispatchedAt);
+    } else if (resp.status === 401 || resp.status === 403) {
+      // bad token — clear it and re-prompt
+      sessionStorage.removeItem("gh_pat");
+      const btn = document.getElementById("btn-clear-pat");
+      if (btn) btn.style.display = "none";
+      log(`Auth failed (${resp.status}) — re-enter token.`, "err");
+      cbeWrite(`✘  Auth ${resp.status} — token invalid or expired.`);
+      _pendingGHAction = { sceno, scene };
+      showPatOverlay();
     } else {
       const body = await resp.text();
       log(`Dispatch failed: HTTP ${resp.status}`, "err");
